@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Friday Pickleball</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f3f1f7; min-height: 100vh; }
+.container { max-width: 700px; margin: 0 auto; padding: 20px; }
+header { text-align: center; padding: 30px 0 16px; }
+header h1 { font-size: 2rem; color: #3b2a5a; }
+.subtitle { color: #6b6478; font-size: 0.9rem; margin-top: 6px; letter-spacing: 1px; text-transform: uppercase; }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 20px 0 10px; }
+.stat-box { background: white; border-radius: 12px; padding: 16px; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.stat-num { font-size: 2rem; font-weight: 700; }
+.stat-label { font-size: 0.7rem; color: #999; letter-spacing: 1px; text-transform: uppercase; margin-top: 2px; }
+.stat-in .stat-num { color: #1f7a5c; }
+.stat-maybe .stat-num { color: #b8860b; }
+.stat-out .stat-num { color: #c0392b; }
+.stat-waiting .stat-num { color: #999; }
+.dinner-bar { background: #3b2a5a; color: #fff; border-radius: 12px; padding: 14px 18px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; font-size: 0.95rem; }
+.dinner-bar strong { font-size: 1.3rem; }
+.status-bar { background: white; border-radius: 8px; padding: 10px 16px; margin-bottom: 12px; font-size: 0.8rem; color: #888; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+.status-bar.connected { color: #1f7a5c; }
+.status-bar.disconnected { color: #c0392b; }
+.card { background: white; border-radius: 12px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.card.join { border: 2px solid #3b2a5a; }
+.section-title { font-size: 0.75rem; font-weight: 700; color: #666; letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 12px; }
+.hint { font-size: 0.8rem; color: #888; margin-top: 8px; }
+.weekly-text-area { width: 100%; border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px; font-size: 0.9rem; color: #333; background: #fafafa; resize: none; min-height: 120px; font-family: inherit; }
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: 8px; border: 1px solid #ddd; background: white; cursor: pointer; font-size: 0.85rem; color: #444; }
+.btn:hover { background: #f0f0f0; }
+.btn-primary { background: #3b2a5a; color: white; border-color: #3b2a5a; }
+.btn-primary:hover { background: #4d3873; }
+.share-section { text-align: center; }
+.add-player-row { display: flex; gap: 10px; }
+.add-player-row input { flex: 1; border: 1px solid #ddd; border-radius: 8px; padding: 10px 14px; font-size: 0.9rem; outline: none; }
+.add-player-row input:focus { border-color: #3b2a5a; }
+.filter-tabs { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.filter-tab { padding: 6px 14px; border-radius: 20px; border: 1px solid #ddd; background: white; cursor: pointer; font-size: 0.8rem; color: #666; }
+.filter-tab.active { background: #3b2a5a; color: white; border-color: #3b2a5a; }
+.player-list { display: flex; flex-direction: column; gap: 6px; }
+.empty { background: white; border-radius: 12px; padding: 30px 20px; text-align: center; color: #888; font-size: 0.9rem; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.player-row { display: flex; align-items: center; padding: 10px 14px; background: #fafafa; border-radius: 8px; border: 1px solid #eee; flex-wrap: wrap; gap: 6px; }
+.player-row.status-in { background: #f0faf6; border-color: #a8d5c2; }
+.player-row.status-maybe { background: #fffbf0; border-color: #f0d78c; }
+.player-row.status-out { background: #fdf5f5; border-color: #f0b8b8; }
+.player-name { flex: 1; min-width: 120px; font-size: 0.95rem; color: #333; }
+.status-btns { display: flex; gap: 6px; }
+.status-btn { padding: 4px 12px; border-radius: 6px; border: 1px solid; cursor: pointer; font-size: 0.78rem; font-weight: 600; }
+.status-btn.in { border-color: #1f7a5c; color: #1f7a5c; background: white; }
+.status-btn.in.active { background: #1f7a5c; color: white; }
+.status-btn.maybe { border-color: #b8860b; color: #b8860b; background: white; }
+.status-btn.maybe.active { background: #b8860b; color: white; }
+.status-btn.out { border-color: #c0392b; color: #c0392b; background: white; }
+.status-btn.out.active { background: #c0392b; color: white; }
+.dinner-btn { padding: 4px 10px; border-radius: 6px; border: 1px solid #c9c2d6; background: white; color: #7a7288; cursor: pointer; font-size: 0.78rem; font-weight: 600; }
+.dinner-btn.active { background: #3b2a5a; border-color: #3b2a5a; color: white; }
+.dinner-btn.hidden { visibility: hidden; }
+.remove-btn { background: none; border: none; color: #ccc; cursor: pointer; font-size: 1.1rem; padding: 2px 4px; }
+.remove-btn:hover { color: #c0392b; }
+.action-row { display: flex; gap: 10px; justify-content: center; margin-top: 14px; flex-wrap: wrap; }
+footer { text-align: center; color: #aaa; font-size: 0.75rem; padding: 20px 0 40px; }
+@media (max-width: 500px) {
+  .stats { grid-template-columns: repeat(2, 1fr); }
+  .status-btn, .dinner-btn { padding: 4px 8px; font-size: 0.72rem; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <h1>&#127955; Friday Pickleball</h1>
+  <div class="subtitle">6:00 PM &middot; Play, then drinks &amp; dinner</div>
+</header>
+
+<div class="status-bar" id="conn-status">Connecting...</div>
+
+<div class="stats">
+  <div class="stat-box stat-in"><div class="stat-num" id="count-in">0</div><div class="stat-label">Playing</div></div>
+  <div class="stat-box stat-maybe"><div class="stat-num" id="count-maybe">0</div><div class="stat-label">Maybe</div></div>
+  <div class="stat-box stat-out"><div class="stat-num" id="count-out">0</div><div class="stat-label">Out</div></div>
+  <div class="stat-box stat-waiting"><div class="stat-num" id="count-waiting">0</div><div class="stat-label">No reply</div></div>
+</div>
+
+<div class="dinner-bar">
+  <span>Staying for drinks &amp; dinner</span>
+  <strong><span id="count-dinner">0</span> people</strong>
+</div>
+
+<div class="card join">
+  <div class="section-title">Join the list</div>
+  <div class="add-player-row">
+    <input type="text" id="new-player" placeholder="Type your name...">
+    <button class="btn btn-primary" onclick="addPlayer()">Add me</button>
+  </div>
+  <div class="hint">Then tap IN, MAYBE or OUT next to your name. Tap DINNER if you're staying after.</div>
+</div>
+
+<div class="filter-tabs">
+  <button class="filter-tab active" onclick="setFilter('all',this)">ALL</button>
+  <button class="filter-tab" onclick="setFilter('waiting',this)">NO REPLY</button>
+  <button class="filter-tab" onclick="setFilter('in',this)">PLAYING</button>
+  <button class="filter-tab" onclick="setFilter('maybe',this)">MAYBE</button>
+  <button class="filter-tab" onclick="setFilter('out',this)">OUT</button>
+</div>
+
+<div class="player-list" id="player-list"></div>
+<div class="empty" id="empty-state" style="display:none">No one on the list yet. Add the first name above.</div>
+
+<div class="card" style="margin-top:16px">
+  <div class="section-title">This week's invite text</div>
+  <textarea class="weekly-text-area" id="weekly-text" readonly></textarea>
+  <div style="margin-top:10px">
+    <button class="btn btn-primary" onclick="copyText()">Copy invite</button>
+    <button class="btn" onclick="copyLink()">Copy link only</button>
+  </div>
+</div>
+
+<div class="action-row">
+  <button class="btn" onclick="resetReplies()">Reset replies (new week)</button>
+  <button class="btn" onclick="clearPlayers()">Clear all names</button>
+</div>
+
+<footer>Replies reset automatically every Saturday morning.</footer>
+
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script>
+var firebaseConfig = {
+  apiKey: "AIzaSyDBAUizQP-R3anFXDqlLtc6LTKTtxmHQag",
+  authDomain: "wednesday-tennis-tracker.firebaseapp.com",
+  databaseURL: "https://wednesday-tennis-tracker-default-rtdb.firebaseio.com",
+  projectId: "wednesday-tennis-tracker",
+  storageBucket: "wednesday-tennis-tracker.firebasestorage.app",
+  messagingSenderId: "889996084528",
+  appId: "1:889996084528:web:23c578b361d157fe29a2f2"
+};
+firebase.initializeApp(firebaseConfig);
+
+// Separate branch of the database so pickleball never touches the tennis list.
+var db = firebase.database();
+var playersRef = db.ref("pickleball/players");
+var metaRef = db.ref("pickleball/meta");
+
+var F = "all", players = {};
+
+db.ref(".info/connected").on("value", function (s) {
+  var el = document.getElementById("conn-status");
+  if (s.val()) { el.textContent = "Live \u2014 everyone sees replies as they come in"; el.className = "status-bar connected"; }
+  else { el.textContent = "Reconnecting..."; el.className = "status-bar disconnected"; }
+});
+
+// Friday of the current week. On Friday itself it still means today;
+// it rolls over to the next Friday on Saturday.
+function fridayDate() {
+  var d = new Date();
+  d.setDate(d.getDate() + ((5 - d.getDay() + 7) % 7));
+  return d;
+}
+function weekKey() {
+  var d = fridayDate();
+  return d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate();
+}
+function fridayLabel() {
+  return fridayDate().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+}
+
+function updateInviteText() {
+  var url = location.href.split("?")[0].split("#")[0];
+  var nl = "\n";
+  document.getElementById("weekly-text").value =
+    "Pickleball this Friday (" + fridayLabel() + ") at 6pm." + nl +
+    "Play first, then drinks and dinner for anyone who wants to stay." + nl + nl +
+    "Tap the link, add your name, say IN / MAYBE / OUT:" + nl + url + nl + nl +
+    "Feel free to pass this along \u2014 anyone can add themselves.";
+}
+
+function counts() {
+  var c = { in: 0, maybe: 0, out: 0, waiting: 0 }, dinner = 0;
+  Object.values(players).forEach(function (p) {
+    c[p.status] = (c[p.status] || 0) + 1;
+    if (p.dinner && p.status !== "out") dinner++;
+  });
+  ["in", "maybe", "out", "waiting"].forEach(function (s) {
+    document.getElementById("count-" + s).textContent = c[s] || 0;
+  });
+  document.getElementById("count-dinner").textContent = dinner;
+}
+
+function setFilter(f, btn) {
+  F = f;
+  document.querySelectorAll(".filter-tab").forEach(function (b) { b.classList.remove("active"); });
+  btn.classList.add("active");
+  render();
+}
+
+function render() {
+  var list = document.getElementById("player-list");
+  list.innerHTML = "";
+  var sorted = Object.entries(players).sort(function (a, b) { return a[1].name.localeCompare(b[1].name); });
+  var filtered = sorted.filter(function (e) { return F === "all" || e[1].status === F; });
+
+  document.getElementById("empty-state").style.display = sorted.length ? "none" : "block";
+
+  filtered.forEach(function (entry) {
+    var key = entry[0], p = entry[1];
+    var row = document.createElement("div");
+    row.className = "player-row status-" + p.status;
+
+    var nd = document.createElement("div");
+    nd.className = "player-name";
+    nd.textContent = p.name;
+
+    var bd = document.createElement("div");
+    bd.className = "status-btns";
+    ["in", "maybe", "out"].forEach(function (s) {
+      var b = document.createElement("button");
+      b.className = "status-btn " + s + (p.status === s ? " active" : "");
+      b.textContent = s === "in" ? "IN" : s === "maybe" ? "?" : "OUT";
+      b.onclick = function () { setStatus(key, s); };
+      bd.appendChild(b);
+    });
+
+    var dn = document.createElement("button");
+    dn.className = "dinner-btn" + (p.dinner ? " active" : "") + (p.status === "out" || p.status === "waiting" ? " hidden" : "");
+    dn.textContent = "\uD83C\uDF7D DINNER";
+    dn.title = "Staying for drinks & dinner";
+    dn.onclick = function () { toggleDinner(key, !p.dinner); };
+
+    var rb = document.createElement("button");
+    rb.className = "remove-btn";
+    rb.innerHTML = "&times;";
+    rb.title = "Remove from list";
+    rb.onclick = function () { remove(key, p.name); };
+
+    row.appendChild(nd);
+    row.appendChild(bd);
+    row.appendChild(dn);
+    row.appendChild(rb);
+    list.appendChild(row);
+  });
+  counts();
+}
+
+function setStatus(key, status) {
+  var upd = { status: status };
+  if (status === "out") upd.dinner = false;
+  playersRef.child(key).update(upd);
+}
+function toggleDinner(key, val) { playersRef.child(key).update({ dinner: !!val }); }
+function remove(key, name) { if (confirm("Remove " + name + " from the list?")) playersRef.child(key).remove(); }
+
+function addPlayer() {
+  var inp = document.getElementById("new-player"), n = inp.value.trim();
+  if (!n) return;
+  playersRef.push({ name: n, status: "waiting", dinner: false });
+  inp.value = "";
+}
+
+function resetReplies() {
+  if (!confirm("Reset all replies for a new week?")) return;
+  doReset();
+}
+function doReset() {
+  var upd = {};
+  Object.keys(players).forEach(function (k) { upd[k + "/status"] = "waiting"; upd[k + "/dinner"] = false; });
+  if (Object.keys(upd).length) playersRef.update(upd);
+  metaRef.child("weekKey").set(weekKey());
+}
+function clearPlayers() {
+  if (!confirm("Remove everyone from the list?")) return;
+  playersRef.remove();
+}
+
+function copyText() {
+  var t = document.getElementById("weekly-text").value;
+  if (navigator.clipboard) { navigator.clipboard.writeText(t).then(function () { alert("Invite copied \u2014 paste it into your group text."); }); }
+  else { document.getElementById("weekly-text").select(); document.execCommand("copy"); alert("Invite copied."); }
+}
+function copyLink() {
+  var u = location.href.split("?")[0].split("#")[0];
+  if (navigator.clipboard) { navigator.clipboard.writeText(u).then(function () { alert("Link copied."); }); }
+  else { alert(u); }
+}
+
+document.getElementById("new-player").addEventListener("keydown", function (e) { if (e.key === "Enter") addPlayer(); });
+
+// Auto-reset: the first person to open the tracker in a new week clears last week's replies.
+playersRef.on("value", function (snap) {
+  players = snap.val() || {};
+  render();
+  metaRef.child("weekKey").once("value", function (s) {
+    var stored = s.val();
+    if (stored !== weekKey()) doReset();
+  });
+});
+
+updateInviteText();
+</script>
+</body>
+</html>
