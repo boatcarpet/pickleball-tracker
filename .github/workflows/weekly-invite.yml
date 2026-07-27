@@ -1,0 +1,24 @@
+name: Weekly pickleball invite
+
+on:
+  schedule:
+    # Monday ~9am US Eastern (13:00 UTC). Shifts by an hour with daylight saving,
+    # but always lands Monday morning.
+    - cron: "0 13 * * 1"
+  workflow_dispatch: {}   # adds a "Run workflow" button for testing on demand
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install firebase-admin
+      - name: Send the weekly invite
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+        run: python send_invite.py
