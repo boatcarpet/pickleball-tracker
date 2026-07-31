@@ -2,10 +2,19 @@ name: Weekly pickleball invite
 
 on:
   schedule:
-    # Monday ~9am US Eastern (13:00 UTC). Shifts by an hour with daylight saving,
-    # but always lands Monday morning.
-    - cron: "0 13 * * 1"
-  workflow_dispatch: {}   # adds a "Run workflow" button for testing on demand
+    # ~9am US Eastern (13:00 UTC). Shifts an hour with daylight saving but stays morning.
+    - cron: "0 13 * * 1"   # Monday  -> sign-up email to everyone with an email
+    - cron: "0 13 * * 4"   # Thursday -> reminder to people marked IN or MAYBE
+  workflow_dispatch:        # "Run workflow" button for testing on demand
+    inputs:
+      mode:
+        description: "Which send to run"
+        default: "auto"
+        type: choice
+        options:
+          - auto
+          - monday
+          - thursday
 
 jobs:
   send:
@@ -16,9 +25,10 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install firebase-admin
-      - name: Send the weekly invite
+      - name: Send the invite / reminder
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          MODE: ${{ github.event.inputs.mode || 'auto' }}
         run: python send_invite.py
