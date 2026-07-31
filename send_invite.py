@@ -1,12 +1,13 @@
 """
-Friday Pickleball reminders.
+Friday Pickleball emails.
 
 Two sends, decided automatically by the day it runs:
-  - MONDAY   -> everyone on the list who has an email (the weekly sign-up nudge)
-  - THURSDAY -> only people marked IN or MAYBE for this Friday, who have an email
+  - MONDAY   -> sign-up nudge to everyone on the list who has an email
+  - THURSDAY -> a CONFIRMATION roster (who's playing, who's staying for dinner),
+                sent to everyone marked IN or MAYBE who has an email
 
-Runs from a GitHub Action. MODE can be forced via the workflow's "Run workflow"
-button (auto / monday / thursday) for testing on demand.
+MODE can be forced from the workflow's "Run workflow" button
+(auto / monday / thursday) for testing on demand.
 """
 import os
 import json
@@ -29,7 +30,6 @@ firebase_admin.initialize_app(cred, {"databaseURL": DATABASE_URL})
 today = datetime.date.today()
 mode = os.environ.get("MODE", "auto").strip().lower()
 if mode not in ("monday", "thursday"):
-    # auto: Thursday (weekday 3) => reminder; anything else => the Monday sign-up send
     mode = "thursday" if today.weekday() == 3 else "monday"
 
 # --- This week's upcoming Friday ---
@@ -40,16 +40,17 @@ when = friday.strftime("%A, %B %-d")
 players = db.reference("pickleball/players").get() or {}
 contacts = db.reference("pickleball/contacts").get() or {}
 
+# --- Who to email ---
 recipients = []
 for key, contact in contacts.items():
     if key not in players:
-        continue  # skip anyone removed from the list
+        continue
     person = players[key] if isinstance(players[key], dict) else {}
     email = (contact or {}).get("email", "").strip() if isinstance(contact, dict) else ""
     if not email:
         continue
     if mode == "thursday" and person.get("status") not in ("in", "maybe"):
-        continue  # Thursday reminder is only for people who said IN or MAYBE
+        continue
     recipients.append((person.get("name", ""), email))
 
 # de-duplicate by email
@@ -62,15 +63,43 @@ if not recipients:
 
 # --- Message wording per send ---
 if mode == "thursday":
-    subject = f"Reminder: Pickleball this Friday {when} - 6pm"
-    body = f"""Quick reminder \u2014 you're on the list for pickleball this Friday ({when}) at 6pm.
-Play first, then drinks and dinner for anyone who wants to stay.
+    # Build the roster from everyone playing (regardless of whether they have an email)
+    in_players, maybe_players = [], []
+    for person in players.values():
+        if not isinstance(person, dict):
+            continue
+        st = person.get("status")
+        nm = person.get("name", "")
+        dn = bool(person.get("dinner"))
+        if st == "in":
+            in_players.append((nm, dn))
+        elif st == "maybe":
+            maybe_players.append((nm, dn))
+    in_players.sort(key=lambda x: x[0].lower())
+    maybe_players.sort(key=lambda x: x[0].lower())
+    dinner_count = sum(1 for _, d in in_players if d) + sum(1 for _, d in maybe_players if d)
 
-Need to change your reply (IN / MAYBE / OUT)? Tap the link:
-{TRACKER_URL}
+    lines = []
+    lines.append(f"Here's who's confirmed for pickleball this Friday ({when}) at 6pm.")
+    lines.append("Play first, then drinks and dinner for anyone who wants to stay.")
+    lines.append("")
+    lines.append(f"PLAYING ({len(in_players)}):")
+    for nm, dn in in_players:
+        lines.append(f"  {nm}" + ("   (staying for dinner)" if dn else ""))
+    if maybe_players:
+        lines.append("")
+        lines.append(f"MAYBE ({len(maybe_players)}):")
+        for nm, dn in maybe_players:
+            lines.append(f"  {nm}" + ("   (staying for dinner)" if dn else ""))
+    lines.append("")
+    lines.append(f"Staying for drinks & dinner: {dinner_count}")
+    lines.append("")
+    lines.append(f"Need to change your reply? {TRACKER_URL}")
+    lines.append("")
+    lines.append("See you Friday!")
 
-See you Friday!
-"""
+    subject = f"Friday 6pm Pickleball - confirmed players ({when})"
+    body = "\n".join(lines) + "\n"
 else:
     subject = f"Pickleball Friday {when} - 6pm"
     body = f"""Pickleball this Friday ({when}) at 6pm.
