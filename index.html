@@ -29,6 +29,9 @@ header h1 { font-size: 2rem; color: #3b2a5a; }
 .section-title { font-size: 0.75rem; font-weight: 700; color: #666; letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 12px; }
 .hint { font-size: 0.8rem; color: #888; margin-top: 8px; line-height: 1.4; }
 .policy { background: #efe9f6; border-radius: 10px; padding: 12px 14px; font-size: 0.82rem; color: #4a3a63; line-height: 1.45; margin-bottom: 16px; }
+.policy-list { margin: 6px 0 6px 20px; padding: 0; }
+.policy-list li { margin-bottom: 3px; }
+.policy-note { margin-top: 8px; padding-top: 8px; border-top: 1px solid #dcd2ea; }
 .weekly-text-area { width: 100%; border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px; font-size: 0.9rem; color: #333; background: #fafafa; resize: none; min-height: 150px; font-family: inherit; }
 .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: 8px; border: 1px solid #ddd; background: white; cursor: pointer; font-size: 0.85rem; color: #444; }
 .btn:hover { background: #f0f0f0; }
@@ -101,7 +104,13 @@ footer { text-align: center; color: #aaa; font-size: 0.75rem; padding: 20px 0 40
 </div>
 
 <div class="policy">
-  <strong>How reminders work:</strong> once you're on this list, we email a reminder every Monday &mdash; automatically. If you're not on the list, you won't get it. No email, or you'd rather get a text? Add your name anyway, leave the email blank, and let Kevin know.
+  <strong>How this works:</strong>
+  <ol class="policy-list">
+    <li>Sign up and add your email.</li>
+    <li>An email goes out every Monday for the upcoming Friday &mdash; automatically. If you're not on the list, you won't get it.</li>
+  </ol>
+  Don't have an email, or would rather not share one? You can still add your name &mdash; just save the link so you can sign up each week.
+  <div class="policy-note">A reminder also goes out <strong>Thursday</strong> to everyone marked IN or MAYBE for that Friday.</div>
 </div>
 
 <div class="card join">
@@ -218,7 +227,8 @@ function updateInviteText() {
     "Pickleball this Friday (" + fridayLabel() + ") at 6pm." + nl +
     "Play first, then drinks and dinner for anyone who wants to stay." + nl + nl +
     "Add your name at the link and say IN / MAYBE / OUT:" + nl + url + nl + nl +
-    "Going forward we'll email a reminder every Monday to everyone on the list \u2014 if you're not on it, you won't get it. No email or prefer a text? Add your name anyway and let me know.";
+    "Going forward we'll email a reminder every Monday to everyone on the list \u2014 if you're not on it, you won't get it. No email or prefer a text? Add your name anyway and let me know." + nl + nl +
+    "Feel free to copy and send this to anyone you'd like to add to the list.";
 }
 
 function counts() {
