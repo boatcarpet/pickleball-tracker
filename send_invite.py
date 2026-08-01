@@ -53,6 +53,11 @@ for key, contact in contacts.items():
         continue
     recipients.append((person.get("name", ""), email))
 
+# Extra people who get the Thursday roster only (not players; here for the dinner headcount).
+# Add more lines here if needed.
+if mode == "thursday":
+    recipients.append(("Mark", "mking@bacmi.net"))
+
 # de-duplicate by email
 seen = set()
 recipients = [(n, e) for (n, e) in recipients if not (e.lower() in seen or seen.add(e.lower()))]
@@ -63,8 +68,8 @@ if not recipients:
 
 # --- Message wording per send ---
 if mode == "thursday":
-    # Build the roster from everyone playing (regardless of whether they have an email)
-    in_players, maybe_players = [], []
+    # Roster built from everyone's current choices (dinner is independent of playing).
+    in_players, maybe_players, dinner_only = [], [], []
     for person in players.values():
         if not isinstance(person, dict):
             continue
@@ -75,9 +80,15 @@ if mode == "thursday":
             in_players.append((nm, dn))
         elif st == "maybe":
             maybe_players.append((nm, dn))
+        if dn and st not in ("in", "maybe"):
+            dinner_only.append(nm)  # staying for dinner but not playing
     in_players.sort(key=lambda x: x[0].lower())
     maybe_players.sort(key=lambda x: x[0].lower())
-    dinner_count = sum(1 for _, d in in_players if d) + sum(1 for _, d in maybe_players if d)
+    dinner_only.sort(key=lambda s: s.lower())
+
+    dinner_playing = sum(1 for _, d in in_players if d) + sum(1 for _, d in maybe_players if d)
+    dinner_only_count = len(dinner_only)
+    dinner_total = dinner_playing + dinner_only_count
 
     lines = []
     lines.append(f"Here's who's confirmed for pickleball this Friday ({when}) at 6pm.")
@@ -91,8 +102,16 @@ if mode == "thursday":
         lines.append(f"MAYBE ({len(maybe_players)}):")
         for nm, dn in maybe_players:
             lines.append(f"  {nm}" + ("   (staying for dinner)" if dn else ""))
+    if dinner_only:
+        lines.append("")
+        lines.append(f"DINNER ONLY ({len(dinner_only)}):")
+        for nm in dinner_only:
+            lines.append(f"  {nm}")
     lines.append("")
-    lines.append(f"Staying for drinks & dinner: {dinner_count}")
+    lines.append("Staying for dinner:")
+    lines.append(f"  Playing: {dinner_playing}")
+    lines.append(f"  Dinner only: {dinner_only_count}")
+    lines.append(f"  Total: {dinner_total}")
     lines.append("")
     lines.append(f"Need to change your reply? {TRACKER_URL}")
     lines.append("")
