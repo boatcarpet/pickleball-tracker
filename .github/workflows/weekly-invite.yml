@@ -3,8 +3,8 @@ name: Weekly pickleball invite
 on:
   schedule:
     # ~9am US Eastern (13:00 UTC). Shifts an hour with daylight saving but stays morning.
-    - cron: "0 13 * * 1"   # Monday  -> sign-up email to everyone with an email
-    - cron: "0 13 * * 4"   # Thursday -> reminder to people marked IN or MAYBE
+    - cron: "17 13 * * 1"   # Monday  -> sign-up email to everyone with an email
+    - cron: "17 13 * * 4"   # Thursday -> reminder to people marked IN or MAYBE
   workflow_dispatch:        # "Run workflow" button for testing on demand
     inputs:
       mode:
