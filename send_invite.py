@@ -49,8 +49,11 @@ for key, contact in contacts.items():
     email = (contact or {}).get("email", "").strip() if isinstance(contact, dict) else ""
     if not email:
         continue
-    if mode == "thursday" and person.get("status") not in ("in", "maybe"):
-        continue
+    if mode == "thursday":
+        # Thursday goes to anyone playing (IN/MAYBE) OR staying for dinner.
+        st = person.get("status")
+        if st not in ("in", "maybe") and not person.get("dinner"):
+            continue
     recipients.append((person.get("name", ""), email))
 
 # Extra people who get the Thursday roster only (not players; here for the dinner headcount).
