@@ -49,11 +49,8 @@ for key, contact in contacts.items():
     email = (contact or {}).get("email", "").strip() if isinstance(contact, dict) else ""
     if not email:
         continue
-    if mode == "thursday":
-        # Thursday goes to anyone playing (IN/MAYBE) OR staying for dinner.
-        st = person.get("status")
-        if st not in ("in", "maybe") and not person.get("dinner"):
-            continue
+    # Thursday goes to everyone on the list who has an email (even no-reply),
+    # so people who haven't answered still see the roster and can jump in.
     recipients.append((person.get("name", ""), email))
 
 # Extra people who get the Thursday roster only (not players; here for the dinner headcount).
@@ -116,7 +113,8 @@ if mode == "thursday":
     lines.append(f"  Dinner only: {dinner_only_count}")
     lines.append(f"  Total: {dinner_total}")
     lines.append("")
-    lines.append(f"Need to change your reply? {TRACKER_URL}")
+    lines.append(f"Not on the list yet, or haven't replied? There's still room \u2014 tap here to add yourself or change your reply:")
+    lines.append(TRACKER_URL)
     lines.append("")
     lines.append("See you Friday!")
 
