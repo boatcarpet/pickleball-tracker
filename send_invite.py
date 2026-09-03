@@ -239,8 +239,8 @@ if ADMIN_EMAIL:
         # A receipt problem must never mask the real send result.
         print(f"[{mode}] Could not send receipt to {ADMIN_EMAIL} - {type(err).__name__}")
 
-# Everyone who could be reached has been. Now surface the problems, and
-# finish with a non-zero exit so the run shows up as failed and gets noticed.
+# Everyone who could be reached has been. Problems are listed below,
+# but the run still exits clean - the receipt carries the same list by email.
 if skipped or failed:
     print("")
     print("--- Needs attention ---")
@@ -249,4 +249,4 @@ if skipped or failed:
     for name, email, why in failed:
         print(f"  Not delivered: {name or '(no name)'} <{email}> - {why}")
     print("Fix these in the tracker, then they'll be included next time.")
-    raise SystemExit(1)
+    
