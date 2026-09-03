@@ -22,6 +22,11 @@ from firebase_admin import credentials, db
 DATABASE_URL = "https://wednesday-tennis-tracker-default-rtdb.firebaseio.com"
 TRACKER_URL = "https://boatcarpet.github.io/pickleball-tracker/"
 
+# Kevin is the sender, so the group email never really lands in his inbox -
+# Gmail files a self-addressed copy into the Sent thread. He gets a short
+# send receipt here instead. Blank this out to turn receipts off.
+ADMIN_EMAIL = "kevin@meadedistributing.com"
+
 # A deliberately loose check: no spaces, exactly one @, a dot in the domain,
 # plain ASCII only. Enough to catch typos and stray characters that make
 # Gmail reject the address outright (555 5.5.2).
@@ -46,6 +51,10 @@ def clean_email(raw):
 service_account = json.loads(os.environ["FIREBASE_SERVICE_ACCOUNT"])
 cred = credentials.Certificate(service_account)
 firebase_admin.initialize_app(cred, {"databaseURL": DATABASE_URL})
+
+# --- Mail credentials (read early so the sender can be filtered out below) ---
+user = os.environ["SMTP_USER"]
+password = os.environ["SMTP_PASS"]
 
 # --- Decide which send this is ---
 today = datetime.date.today()
@@ -88,6 +97,9 @@ if mode == "thursday":
 # de-duplicate by email
 seen = set()
 recipients = [(n, e) for (n, e) in recipients if not (e.lower() in seen or seen.add(e.lower()))]
+
+# The sender is dropped from the group send - see ADMIN_EMAIL above.
+recipients = [(n, e) for (n, e) in recipients if e.lower() != user.lower()]
 
 # Report anything we had to leave out, so a bad address is visible in the log.
 if skipped:
@@ -165,8 +177,6 @@ You're getting this because you're on the list. Want off the list, or prefer a t
 """
 
 # --- Send one message per person (so nobody sees anyone else's address) ---
-user = os.environ["SMTP_USER"]
-password = os.environ["SMTP_PASS"]
 
 sent = 0
 failed = []
@@ -194,6 +204,40 @@ with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
         print(f"[{mode}] Sent to {name or '(no name)'} <{email}>")
 
 print(f"Done. [{mode}] {sent} email(s) sent for {when}.")
+
+# --- Send receipt: a short summary to ADMIN_EMAIL, not to the group ---
+if ADMIN_EMAIL:
+    receipt = [f"{mode.capitalize()} send for {when}.", ""]
+    receipt.append(f"Emails sent: {sent} of {len(recipients)}")
+    if skipped:
+        receipt.append("")
+        receipt.append(f"Unusable addresses ({len(skipped)}) - fix these in the tracker:")
+        for name, raw in skipped:
+            receipt.append(f"  {name or '(no name)'} -> {raw!r}")
+    if failed:
+        receipt.append("")
+        receipt.append(f"Not delivered ({len(failed)}):")
+        for name, email, why in failed:
+            receipt.append(f"  {name or '(no name)'} <{email}> - {why}")
+    if not skipped and not failed:
+        receipt.append("")
+        receipt.append("No problems - every address on the list went out.")
+    receipt.append("")
+    receipt.append(TRACKER_URL)
+
+    note = EmailMessage()
+    note["Subject"] = f"[pickleball] {mode} send - {sent} email(s) for {when}"
+    note["From"] = user
+    note["To"] = ADMIN_EMAIL
+    note.set_content("\n".join(receipt) + "\n")
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(user, password)
+            server.send_message(note)
+        print(f"[{mode}] Receipt sent to {ADMIN_EMAIL}")
+    except smtplib.SMTPException as err:
+        # A receipt problem must never mask the real send result.
+        print(f"[{mode}] Could not send receipt to {ADMIN_EMAIL} - {type(err).__name__}")
 
 # Everyone who could be reached has been. Now surface the problems, and
 # finish with a non-zero exit so the run shows up as failed and gets noticed.
