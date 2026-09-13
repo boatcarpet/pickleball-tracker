@@ -86,8 +86,9 @@ footer { text-align: center; color: #aaa; font-size: 0.75rem; padding: 20px 0 40
 
 <header>
   <h1>&#127955; Friday Pickleball</h1>
-  <div class="subtitle">6:00 PM &middot; Play, then drinks &amp; dinner</div>
+  <div class="subtitle">5:30 PM &middot; Play, then drinks &amp; dinner</div>
 </header>
+  <div style="background:#3b2a5a;color:#fff;border-radius:12px;padding:14px 18px;margin-bottom:12px;text-align:center;font-size:1rem;font-weight:700;">&#9200; NEW START TIME &mdash; 5:30 PM (moved up from 6:00)</div>
 
 <div class="status-bar" id="conn-status">Connecting...</div>
 
@@ -224,7 +225,8 @@ function updateInviteText() {
   var url = location.href.split("?")[0].split("#")[0];
   var nl = "\n";
   document.getElementById("weekly-text").value =
-    "Pickleball this Friday (" + fridayLabel() + ") at 6pm." + nl +
+    "*** NEW START TIME: 5:30pm (moved up from 6pm) ***" + nl + nl +
+    "Pickleball this Friday (" + fridayLabel() + ") at 5:30pm." + nl +
     "Play first, then drinks and dinner for anyone who wants to stay." + nl + nl +
     "Add your name at the link and say IN / MAYBE / OUT:" + nl + url + nl + nl +
     "Going forward we'll email a reminder every Monday to everyone on the list \u2014 if you're not on it, you won't get it. No email or prefer a text? Add your name anyway and let me know." + nl + nl +
