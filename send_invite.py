@@ -1,5 +1,5 @@
 """
-Friday Pickleball emails.
+Friday Paddle emails.
 
 Two sends, decided automatically by the day it runs:
   - MONDAY   -> sign-up nudge to everyone on the list who has an email
@@ -136,7 +136,7 @@ if mode == "thursday":
     dinner_total = dinner_playing + dinner_only_count
 
     lines = []
-    lines.append(f"Here's who's confirmed for pickleball this Friday ({when}) at 6pm.")
+    lines.append(f"Here's who's confirmed for paddle this Friday ({when}) at 6pm.")
     lines.append("Play first, then drinks and dinner for anyone who wants to stay.")
     lines.append("")
     lines.append(f"PLAYING ({len(in_players)}):")
@@ -163,11 +163,11 @@ if mode == "thursday":
     lines.append("")
     lines.append("See you Friday!")
 
-    subject = f"Friday 6pm Pickleball - confirmed players ({when})"
+    subject = f"Friday 6pm Paddle - confirmed players ({when})"
     body = "\n".join(lines) + "\n"
 else:
-    subject = f"Pickleball Friday {when} - 6pm"
-    body = f"""Pickleball this Friday ({when}) at 6pm.
+    subject = f"Paddle Friday {when} - 6pm"
+    body = f"""Paddle this Friday ({when}) at 6pm.
 Play first, then drinks and dinner for anyone who wants to stay.
 
 Tap the link, add your name, say IN / MAYBE / OUT:
