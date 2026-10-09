@@ -1,0 +1,52 @@
+name: Wednesday paddle emails
+
+on:
+  schedule:
+    # GitHub cron is UTC only and its scheduled runs can be late or skipped, so
+    # this fires more often than the emails go out. wednesday_invite.py works out
+    # the Michigan time itself and stamps each send in Firebase, so extra runs
+    # do nothing and a missed run is picked up by the next one.
+    #
+    # 2pm in Michigan is 18:00 UTC in summer (EDT) and 19:00 UTC in winter (EST).
+    - cron: "7 18-23 * * 0"   # Sunday 2pm ET onward  -> reset + sign-up email
+    - cron: "7 14 * * 1"      # Monday morning        -> catch-up if Sunday was skipped
+    - cron: "7 18-23 * * 2"   # Tuesday 2pm ET onward -> courts email, then hourly change check
+    - cron: "7 0-11 * * 3"    # Tuesday night to 7am Wednesday -> hourly change check
+  workflow_dispatch:           # "Run workflow" button for testing on demand
+    inputs:
+      mode:
+        description: "Which send to run"
+        default: "auto"
+        type: choice
+        options:
+          - auto
+          - sunday
+          - tuesday
+          - update
+      preview:
+        description: "Preview: email Kevin only, change nothing"
+        default: true
+        type: boolean
+
+# Never let two runs overlap - the second waits for the first.
+concurrency:
+  group: wednesday-paddle
+  cancel-in-progress: false
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - run: pip install firebase-admin
+      - name: Send whatever is due
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          MODE: ${{ github.event.inputs.mode || 'auto' }}
+          PREVIEW: ${{ github.event.inputs.preview || 'false' }}
+        run: python wednesday_invite.py
