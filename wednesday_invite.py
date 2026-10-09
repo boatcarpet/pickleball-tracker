@@ -40,7 +40,7 @@ SEND_HOUR = 14         # 2:00 PM for the Sunday and Tuesday emails
 ROLLOVER_HOUR = 12     # at noon Wednesday the page points at next week
 
 # No paddle before this date. Must match FIRST_WEDNESDAY in the page.
-FIRST_WEDNESDAY = datetime.date(2026, 10, 21)
+FIRST_WEDNESDAY = datetime.date(2026, 10, 14)
 
 # A deliberately loose check: no spaces, exactly one @, a dot in the domain,
 # plain ASCII only. Enough to catch typos and stray characters that make
