@@ -17,7 +17,8 @@ never done twice and a late or skipped run is picked up by the next one.
                   court (or waiting group) is different now.
 
 MODE (auto / thursday / sunday / tuesday / update) forces one job from the
-"Run workflow" button. PREVIEW=true emails Kevin only and changes nothing.
+"Run workflow" button. MODE=open opens sign-up for the coming Wednesday right
+away (clears last week's replies) without sending any email. PREVIEW=true emails Kevin only and changes nothing.
 """
 import os
 import re
@@ -368,7 +369,7 @@ def run(now, mode, preview, store, mailer, log=print):
     play_time = at(wed, PLAY_HOUR)
 
     # ---- which job? ----
-    if mode in ("thursday", "sunday", "tuesday", "update"):
+    if mode in ("open", "thursday", "sunday", "tuesday", "update"):
         job = mode
     elif (thursday_day >= FIRST_THURSDAY and thursday_due <= now < sunday_due
           and meta.get("thursdaySent") != wk and meta.get("openWeek") != wk):
@@ -452,6 +453,15 @@ def run(now, mode, preview, store, mailer, log=print):
         store.update("wednesday/state", {"lineup": None})
         meta["openWeek"] = wk
         log(f"{tag} Replies cleared and sign-up opened for {when} ({len(players)} on the list).")
+
+    # ---- OPEN: open sign-up now, no email ----
+    if job == "open":
+        if preview:
+            log(f"{tag} Would open sign-up for {when} (openWeek is {meta.get('openWeek')!r}). Nothing changed.")
+            return "open-preview"
+        open_signup()
+        log(f"Done. {tag} Sign-up is open for {when}. No email sent.")
+        return "open"
 
     # ---- THURSDAY: reset, open sign-up for next Wednesday, email everyone ----
     if job == "thursday":
@@ -594,7 +604,7 @@ class FirebaseStore:
 
 if __name__ == "__main__":
     mode = os.environ.get("MODE", "auto").strip().lower()
-    if mode not in ("thursday", "sunday", "tuesday", "update"):
+    if mode not in ("open", "thursday", "sunday", "tuesday", "update"):
         mode = "auto"
     preview = os.environ.get("PREVIEW", "false").strip().lower() == "true"
     mailer = Mailer(os.environ["SMTP_USER"], os.environ["SMTP_PASS"])

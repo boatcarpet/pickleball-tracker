@@ -22,6 +22,7 @@ on:
         type: choice
         options:
           - auto
+          - open
           - thursday
           - sunday
           - tuesday
