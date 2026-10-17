@@ -170,7 +170,7 @@ Courts fill 4 at a time, in the order people say IN. A reminder goes out Sunday 
 
 If you say IN and then can't make it, tap OUT right away so the next person in line gets your spot.
 
-You're getting this because you're on the Wednesday list. Want off the list? Tap the x next to your name on the page, or just reply and let me know.
+You're getting this because you're on the Wednesday list. Want off the list? Tap "remove from list" under your name on the page, or just reply and let me know.
 """
     return subject, body
 
@@ -198,7 +198,7 @@ Courts fill 4 at a time, in the order people say IN. The courts email goes out T
 
 If you said IN and can't make it, tap OUT right away so the next person in line gets your spot.
 
-You're getting this because you're on the Wednesday list. Want off the list? Tap the x next to your name on the page, or just reply and let me know.
+You're getting this because you're on the Wednesday list. Want off the list? Tap "remove from list" under your name on the page, or just reply and let me know.
 """
         return subject, body
     subject = f"Wednesday Paddle {when} - 7am - sign-up is open"
@@ -211,7 +211,7 @@ Courts fill 4 at a time, in the order people say IN. A second email goes out Tue
 
 If you say IN and then can't make it, tap OUT right away so the next person in line gets your spot.
 
-You're getting this because you're on the Wednesday list. Want off the list? Tap the x next to your name on the page, or just reply and let me know.
+You're getting this because you're on the Wednesday list. Want off the list? Tap "remove from list" under your name on the page, or just reply and let me know.
 """
     return subject, body
 
