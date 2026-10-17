@@ -1,12 +1,14 @@
 """
 Wednesday Paddle emails (7am Wednesday group).
 
-Three jobs. The workflow runs this often; the script works out for itself,
+Four jobs. The workflow runs this often; the script works out for itself,
 in Michigan time, which job is due and stamps each one in Firebase so it is
 never done twice and a late or skipped run is picked up by the next one.
 
-  SUNDAY 2pm   -> clear last week's replies, open sign-up for this Wednesday,
-                  email everyone on the list with the link.
+  THURSDAY 8am -> the morning after paddle: clear last week's replies, open
+                  sign-up for next Wednesday, email everyone with the link.
+  SUNDAY 2pm   -> reminder to everyone, with who is in so far. (If the
+                  Thursday email never went out, Sunday does the reset instead.)
   TUESDAY 2pm  -> email everyone the courts: full courts of 4 in the order
                   people said IN, then whoever is left over as "waiting",
                   with how many more players that court needs.
@@ -14,7 +16,7 @@ never done twice and a late or skipped run is picked up by the next one.
                   or joined. If a court changed, email only the players whose
                   court (or waiting group) is different now.
 
-MODE (auto / sunday / tuesday / update) forces one job from the
+MODE (auto / thursday / sunday / tuesday / update) forces one job from the
 "Run workflow" button. PREVIEW=true emails Kevin only and changes nothing.
 """
 import os
@@ -37,10 +39,15 @@ MICHIGAN = ZoneInfo("America/New_York")
 COURT_SIZE = 4
 PLAY_HOUR = 7          # 7:00 AM Wednesday
 SEND_HOUR = 14         # 2:00 PM for the Sunday and Tuesday emails
+THURSDAY_HOUR = 8      # 8:00 AM for the Thursday sign-up email
 ROLLOVER_HOUR = 12     # at noon Wednesday the page points at next week
 
 # No paddle before this date. Must match FIRST_WEDNESDAY in the page.
 FIRST_WEDNESDAY = datetime.date(2026, 10, 14)
+
+# First Thursday sign-up email. Before this, sign-up opened on Sunday only.
+# Must match FIRST_THURSDAY in the page.
+FIRST_THURSDAY = datetime.date(2026, 10, 22)
 
 # A deliberately loose check: no spaces, exactly one @, a dot in the domain,
 # plain ASCII only. Enough to catch typos and stray characters that make
@@ -150,8 +157,49 @@ def names_list(names):
 
 # ---------------------------------------------------------------- the emails
 
-def sunday_email(wed):
+def thursday_email(wed):
     when = nice(wed)
+    subject = f"Wednesday Paddle {when} - 7am - sign-up is open"
+    body = f"""Paddle next Wednesday ({short(wed)}) at 7am. Sign-up is open now.
+
+Tap the link, find your name, and tap IN:
+{TRACKER_URL}
+
+Courts fill 4 at a time, in the order people say IN. A reminder goes out Sunday at 2pm, and the courts email goes out Tuesday at 2pm.
+
+If you say IN and then can't make it, tap OUT right away so the next person in line gets your spot.
+
+You're getting this because you're on the Wednesday list. Want off the list? Tap the x next to your name on the page, or just reply and let me know.
+"""
+    return subject, body
+
+
+def sunday_email(wed, L=None):
+    """L is the lineup so far when sign-up already opened Thursday (reminder);
+    None when this Sunday run is the one opening sign-up."""
+    when = nice(wed)
+    if L is not None:
+        subject = f"Reminder: Wednesday Paddle {when} - 7am"
+        if L["order"]:
+            n = len(L["order"])
+            names = "\n".join(f"  {i}. {name}" for i, (_, name) in enumerate(L["order"], start=1))
+            so_far = f"{n} {'is' if n == 1 else 'are'} in so far:\n{names}"
+        else:
+            so_far = "No one is in yet."
+        body = f"""Reminder: paddle this Wednesday ({short(wed)}) at 7am.
+
+{so_far}
+
+Not in yet? Tap the link, find your name, and tap IN:
+{TRACKER_URL}
+
+Courts fill 4 at a time, in the order people say IN. The courts email goes out Tuesday at 2pm.
+
+If you said IN and can't make it, tap OUT right away so the next person in line gets your spot.
+
+You're getting this because you're on the Wednesday list. Want off the list? Tap the x next to your name on the page, or just reply and let me know.
+"""
+        return subject, body
     subject = f"Wednesday Paddle {when} - 7am - sign-up is open"
     body = f"""Paddle this Wednesday ({short(wed)}) at 7am. Sign-up is open now.
 
@@ -313,13 +361,18 @@ def run(now, mode, preview, store, mailer, log=print):
     meta = store.get("wednesday/meta") or {}
     players = {k: v for k, v in players.items() if isinstance(v, dict)}
 
+    thursday_day = wed - datetime.timedelta(days=6)
+    thursday_due = at(thursday_day, THURSDAY_HOUR)
     sunday_due = at(wed - datetime.timedelta(days=3), SEND_HOUR)
     tuesday_due = at(wed - datetime.timedelta(days=1), SEND_HOUR)
     play_time = at(wed, PLAY_HOUR)
 
     # ---- which job? ----
-    if mode in ("sunday", "tuesday", "update"):
+    if mode in ("thursday", "sunday", "tuesday", "update"):
         job = mode
+    elif (thursday_day >= FIRST_THURSDAY and thursday_due <= now < sunday_due
+          and meta.get("thursdaySent") != wk and meta.get("openWeek") != wk):
+        job = "thursday"
     elif now >= sunday_due and meta.get("sundaySent") != wk:
         job = "sunday"
     elif tuesday_due <= now < play_time and meta.get("tuesdaySent") != wk:
@@ -328,7 +381,8 @@ def run(now, mode, preview, store, mailer, log=print):
         job = "update"
     else:
         log(f"[auto] Nothing due right now for {when} "
-            f"(Sunday email {'sent' if meta.get('sundaySent') == wk else 'due ' + sunday_due.strftime('%a %b %d %I:%M %p')}, "
+            f"(Thursday email {'sent' if meta.get('thursdaySent') == wk else 'due ' + thursday_due.strftime('%a %b %d %I:%M %p')}, "
+            f"Sunday email {'sent' if meta.get('sundaySent') == wk else 'due ' + sunday_due.strftime('%a %b %d %I:%M %p')}, "
             f"Tuesday email {'sent' if meta.get('tuesdaySent') == wk else 'due ' + tuesday_due.strftime('%a %b %d %I:%M %p')}).")
         return "nothing"
 
@@ -384,27 +438,49 @@ def run(now, mode, preview, store, mailer, log=print):
         why = mailer.send(ADMIN_EMAIL, "[PREVIEW] " + subject, "\n".join(head) + "\n\n----------\n\n" + body)
         log(f"{tag} Preview {'NOT sent - ' + why if why else 'sent to ' + ADMIN_EMAIL}")
 
-    # ---- SUNDAY: reset, open sign-up, email everyone ----
+    def open_signup():
+        """Clear last week's replies and open sign-up for this Wednesday. Once per week."""
+        if meta.get("openWeek") == wk:
+            return
+        wipe = {}
+        for key in players:
+            wipe[f"{key}/status"] = "waiting"
+            wipe[f"{key}/inAt"] = None
+        if wipe:
+            store.update("wednesday/players", wipe)
+        store.update("wednesday/meta", {"openWeek": wk, "openedAt": now.isoformat(timespec="seconds")})
+        store.update("wednesday/state", {"lineup": None})
+        meta["openWeek"] = wk
+        log(f"{tag} Replies cleared and sign-up opened for {when} ({len(players)} on the list).")
+
+    # ---- THURSDAY: reset, open sign-up for next Wednesday, email everyone ----
+    if job == "thursday":
+        subject, body = thursday_email(wed)
+        recipients = everyone()
+        if preview:
+            preview_mail(subject, body, recipients,
+                         "" if meta.get("openWeek") != wk else
+                         "Note: sign-up for this Wednesday is already open, so a real run would not clear any replies.")
+            return "thursday-preview"
+        open_signup()
+        sent, failed = deliver(recipients, subject, body)
+        store.update("wednesday/meta", {"thursdaySent": wk})
+        receipt("Thursday sign-up email", sent, len(recipients), failed, body)
+        log(f"Done. {tag} {sent} email(s) sent for {when}.")
+        return "thursday"
+
+    # ---- SUNDAY: reminder if sign-up opened Thursday, otherwise reset + open ----
     if job == "sunday":
-        subject, body = sunday_email(wed)
+        already_open = meta.get("openWeek") == wk
+        subject, body = sunday_email(wed, lineup(players) if already_open else None)
         recipients = everyone()
         if preview:
             preview_mail(subject, body, recipients)
             return "sunday-preview"
-        if meta.get("openWeek") != wk:
-            # Clear last week's replies. Names and emails stay.
-            wipe = {}
-            for key in players:
-                wipe[f"{key}/status"] = "waiting"
-                wipe[f"{key}/inAt"] = None
-            if wipe:
-                store.update("wednesday/players", wipe)
-            store.update("wednesday/meta", {"openWeek": wk, "openedAt": now.isoformat(timespec="seconds")})
-            store.update("wednesday/state", {"lineup": None})
-            log(f"{tag} Replies cleared and sign-up opened for {when} ({len(players)} on the list).")
+        open_signup()
         sent, failed = deliver(recipients, subject, body)
         store.update("wednesday/meta", {"sundaySent": wk})
-        receipt("Sunday sign-up email", sent, len(recipients), failed, body)
+        receipt("Sunday reminder email" if already_open else "Sunday sign-up email", sent, len(recipients), failed, body)
         log(f"Done. {tag} {sent} email(s) sent for {when}.")
         return "sunday"
 
@@ -518,7 +594,7 @@ class FirebaseStore:
 
 if __name__ == "__main__":
     mode = os.environ.get("MODE", "auto").strip().lower()
-    if mode not in ("sunday", "tuesday", "update"):
+    if mode not in ("thursday", "sunday", "tuesday", "update"):
         mode = "auto"
     preview = os.environ.get("PREVIEW", "false").strip().lower() == "true"
     mailer = Mailer(os.environ["SMTP_USER"], os.environ["SMTP_PASS"])

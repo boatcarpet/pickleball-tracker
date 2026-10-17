@@ -8,6 +8,8 @@ on:
     # do nothing and a missed run is picked up by the next one.
     #
     # 2pm in Michigan is 18:00 UTC in summer (EDT) and 19:00 UTC in winter (EST).
+    # 8am in Michigan is 12:00 UTC in summer (EDT) and 13:00 UTC in winter (EST).
+    - cron: "7 12-17 * * 4"   # Thursday 8am ET onward -> reset + sign-up email for next Wednesday
     - cron: "7 18-23 * * 0"   # Sunday 2pm ET onward  -> reset + sign-up email
     - cron: "7 14 * * 1"      # Monday morning        -> catch-up if Sunday was skipped
     - cron: "7 18-23 * * 2"   # Tuesday 2pm ET onward -> courts email, then hourly change check
@@ -20,6 +22,7 @@ on:
         type: choice
         options:
           - auto
+          - thursday
           - sunday
           - tuesday
           - update
