@@ -2,9 +2,17 @@ name: Weekly pickleball invite
 
 on:
   schedule:
-    # ~9am US Eastern (13:00 UTC). Shifts an hour with daylight saving but stays morning.
-    - cron: "17 13 * * 1"   # Monday  -> sign-up email to everyone with an email
-    - cron: "17 13 * * 4"   # Thursday -> reminder to people marked IN or MAYBE
+    # GitHub cron is UTC only and GitHub often starts runs late or drops them.
+    # So each send day fires three times; send_invite.py sends on the first
+    # run at/after 9am ET and the rest see the "already sent" mark and stop.
+    # Monday -> sign-up email to everyone with an email
+    - cron: "17 13 * * 1"   # 9:17am EDT / 8:17am EST
+    - cron: "17 14 * * 1"   # 10:17am EDT / 9:17am EST
+    - cron: "47 16 * * 1"   # 12:47pm EDT / 11:47am EST - backup
+    # Thursday -> confirmation roster
+    - cron: "17 13 * * 4"
+    - cron: "17 14 * * 4"
+    - cron: "47 16 * * 4"
   workflow_dispatch:        # "Run workflow" button for testing on demand
     inputs:
       mode:
@@ -31,4 +39,7 @@ jobs:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           MODE: ${{ github.event.inputs.mode || 'auto' }}
+          # Lets the script tell a scheduled run from a manual one: the time
+          # guards apply to the schedule, never to the "Run workflow" button.
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
         run: python send_invite.py

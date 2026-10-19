@@ -14,6 +14,7 @@ import re
 import json
 import smtplib
 import datetime
+from zoneinfo import ZoneInfo
 from email.message import EmailMessage
 
 import firebase_admin
@@ -56,15 +57,44 @@ firebase_admin.initialize_app(cred, {"databaseURL": DATABASE_URL})
 user = os.environ["SMTP_USER"]
 password = os.environ["SMTP_PASS"]
 
+# --- What time is it in Michigan? ---
+# GitHub's scheduler is unreliable - it starts runs hours late and sometimes
+# drops them. So the workflow fires several times on each send day, and the
+# first scheduled run at or after the send time sends. The others see the
+# "already sent this week" mark in Firebase and stop, so nobody gets two.
+ET = ZoneInfo("America/New_York")
+now_et = datetime.datetime.now(ET)
+today = now_et.date()
+SEND_DAYS = {"monday": 0, "thursday": 3}
+SEND_HOURS = {"monday": 9, "thursday": 9}    # ~9:15am ET both days
+
 # --- Decide which send this is ---
-today = datetime.date.today()
 mode = os.environ.get("MODE", "auto").strip().lower()
 if mode not in ("monday", "thursday"):
     mode = "thursday" if today.weekday() == 3 else "monday"
 
+# The guards apply to scheduled runs only - a manual "Run workflow" fires
+# whenever you press the button.
+scheduled = (os.environ.get("GITHUB_EVENT_NAME", "") == "schedule")
+if scheduled and today.weekday() != SEND_DAYS[mode]:
+    print(f"Scheduled run on {today:%A} - not a {mode} send day "
+          f"(GitHub started it very late). Nothing sent.")
+    raise SystemExit(0)
+if scheduled and now_et.hour < SEND_HOURS[mode]:
+    print(f"Scheduled run at {now_et:%-I:%M %p %Z} - before the {mode} send "
+          f"time. A later run will send.")
+    raise SystemExit(0)
+
 # --- This week's upcoming Friday ---
 friday = today + datetime.timedelta(days=(4 - today.weekday()) % 7)
 when = friday.strftime("%A, %B %-d")
+week_key = f"{friday.year}-{friday.month}-{friday.day}"
+
+# --- Only once per send per week ---
+sent_ref = db.reference("pickleball/meta/sent_" + mode)
+if scheduled and sent_ref.get() == week_key:
+    print(f"[{mode}] Already sent for {when} - this is a backup firing. Nothing sent.")
+    raise SystemExit(0)
 
 # --- Pull the list ---
 players = db.reference("pickleball/players").get() or {}
@@ -204,6 +234,13 @@ with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
         print(f"[{mode}] Sent to {name or '(no name)'} <{email}>")
 
 print(f"Done. [{mode}] {sent} email(s) sent for {when}.")
+
+# Mark this week's send done so the backup firings don't send it again.
+if sent:
+    try:
+        sent_ref.set(week_key)
+    except Exception as err:
+        print(f"[{mode}] Could not record the send in Firebase - {type(err).__name__}")
 
 # --- Send receipt: a short summary to ADMIN_EMAIL, not to the group ---
 if ADMIN_EMAIL:
