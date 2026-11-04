@@ -8,7 +8,7 @@ out twice:
 TIMES LINE UP -> the first time two teams have a time in common, one email to
                  every player on both teams with the common times. The home
                  team books it on the page and reserves a court.
-MATCH BOOKED  -> when the home team taps Book (or moves a booking to a new
+MATCH BOOKED  -> when either team taps Book (or moves a booking to a new
                  time), one email to every player on both teams.
 DAY BEFORE    -> from 9am the day before a booked match, a reminder to both
                  teams. Skipped if the match was booked after that point.
@@ -108,8 +108,10 @@ def overlap_email(m, times):
 
 {listed}
 
-{home} is the home team. {home}, please pick one, tap Book on the page, and reserve a court:
+Either team can pick one and tap Book on the page:
 {PAGE_URL}
+
+{home} is the home team, so {home} reserves the court.
 
 Reply-all here if you need to work out which time or which club.
 
@@ -127,7 +129,7 @@ def booked_email(m, when, moved):
 
 {home} (home team): please make sure a court is reserved.
 
-Need to change it? The home team can tap Unbook on the page and pick another time:
+Need to change it? Either team can tap Unbook on the page and pick another time:
 {PAGE_URL}
 
 A reminder goes out the day before. Enter the score on Tenniscores after you play.
