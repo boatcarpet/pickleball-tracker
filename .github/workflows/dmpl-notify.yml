@@ -1,0 +1,36 @@
+name: DMPL Flight 2 emails
+
+on:
+  schedule:
+    # Every 15 minutes. GitHub can run these late or skip them, so cron-job.org
+    # also presses "Run workflow" every 15 minutes. dmpl_notify.py stamps each
+    # send in Firebase, so extra runs send nothing.
+    - cron: "4,19,34,49 * * * *"
+  workflow_dispatch:
+    inputs:
+      preview:
+        description: "Preview: email Kevin only, change nothing"
+        default: false
+        type: boolean
+
+concurrency:
+  group: dmpl-notify
+  cancel-in-progress: false
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - run: pip install firebase-admin
+      - name: Send whatever is new
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          DMPL_ROSTER: ${{ secrets.DMPL_ROSTER }}
+          PREVIEW: ${{ github.event.inputs.preview || 'false' }}
+        run: python dmpl_notify.py
