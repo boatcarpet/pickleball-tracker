@@ -30,7 +30,7 @@ from zoneinfo import ZoneInfo
 
 DATABASE_URL = "https://wednesday-tennis-tracker-default-rtdb.firebaseio.com"
 PAGE_URL = "https://boatcarpet.github.io/dmpl/"
-ADMIN_EMAIL = "kevin@meadedistributing.com"
+ADMIN_EMAIL = "sales@boatcarpet.com"
 MICHIGAN = ZoneInfo("America/New_York")
 REMINDER_HOUR = 9  # 9:00 AM the day before
 
