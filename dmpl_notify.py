@@ -37,13 +37,13 @@ PAGE_URL = "https://boatcarpet.github.io/dmpl/"
 ADMIN_EMAIL = "sales@boatcarpet.com"
 MICHIGAN = ZoneInfo("America/New_York")
 REMINDER_HOUR = 9   # 9:00 AM the day before a match
-  MORNING_HOUR = 8    # daily times email, and the Monday check-in
-  MAX_TIMES = 15      # most times listed per team in one email
-  
-  TEAMS = {
-      "AJ": "Arnaud/Jess", "BD": "Bryan/Dan", "CHP": "Curry/Heil/Peterson",
-      "DCP": "David/Chris/Patrick", "DS": "David/Scott", "JK": "Jim/Kevin",
-      "ND": "Nick/Drew", "RRM": "Ryan/Ryan/Michael", "WRS": "Wade/Rick/Sandeep",
+MORNING_HOUR = 8    # daily times email, and the Monday check-in
+MAX_TIMES = 15      # most times listed per team in one email
+
+TEAMS = {
+    "AJ": "Arnaud/Jess", "BD": "Bryan/Dan", "CHP": "Curry/Heil/Peterson",
+    "DCP": "David/Chris/Patrick", "DS": "David/Scott", "JK": "Jim/Kevin",
+    "ND": "Nick/Drew", "RRM": "Ryan/Ryan/Michael", "WRS": "Wade/Rick/Sandeep",
 }
 # [home, away] - must match PAIRS in the page
 PAIRS = [["AJ","CHP"],["AJ","BD"],["ND","AJ"],["DS","AJ"],["AJ","DCP"],["RRM","AJ"],["AJ","JK"],["WRS","AJ"],
