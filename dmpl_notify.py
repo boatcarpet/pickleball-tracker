@@ -5,15 +5,16 @@ Runs every 15 minutes. Each run reads the scheduler data in Firebase and
 sends only what is new, stamping each send under dmpl/sent so nothing goes
 out twice:
 
-TIMES POSTED    -> when a team marks new times (and has stopped changing them
-                   for one run, so a burst of taps is one email), each team
-                   they still need to play gets an email with those times and
-                   the team's note. Every time is a link that opens the page
-                   with the reader's team picked and that match ready to book.
+MORNING 8AM     -> once a day, each team gets one email listing the opponents
+                   they still need to play who added new times since the last
+                   morning email (all their open times, new ones marked, and
+                   their note). Every time is a link that opens the page with
+                   the reader's team picked and that match ready to book.
+                   Nothing new for a team = no email for that team.
 MATCH BOOKED    -> when either team books (or moves) a match: both teams.
 MATCH CANCELLED -> when either team cancels a booked match: both teams.
 DAY BEFORE      -> from 9am the day before a booked match: both teams.
-MONDAY 9AM      -> each team gets a reminder to mark times, with the open
+MONDAY 8AM      -> replaces that morning's email: each team gets a reminder to mark times, with the open
                    times of every team they still need to play (as links)
                    and their upcoming booked matches.
 
@@ -36,13 +37,13 @@ PAGE_URL = "https://boatcarpet.github.io/dmpl/"
 ADMIN_EMAIL = "sales@boatcarpet.com"
 MICHIGAN = ZoneInfo("America/New_York")
 REMINDER_HOUR = 9   # 9:00 AM the day before a match
-MONDAY_HOUR = 9     # 9:00 AM Monday reminder
-MAX_TIMES = 15      # most times listed per team in one email
-
-TEAMS = {
-    "AJ": "Arnaud/Jess", "BD": "Bryan/Dan", "CHP": "Curry/Heil/Peterson",
-    "DCP": "David/Chris/Patrick", "DS": "David/Scott", "JK": "Jim/Kevin",
-    "ND": "Nick/Drew", "RRM": "Ryan/Ryan/Michael", "WRS": "Wade/Rick/Sandeep",
+  MORNING_HOUR = 8    # daily times email, and the Monday check-in
+  MAX_TIMES = 15      # most times listed per team in one email
+  
+  TEAMS = {
+      "AJ": "Arnaud/Jess", "BD": "Bryan/Dan", "CHP": "Curry/Heil/Peterson",
+      "DCP": "David/Chris/Patrick", "DS": "David/Scott", "JK": "Jim/Kevin",
+      "ND": "Nick/Drew", "RRM": "Ryan/Ryan/Michael", "WRS": "Wade/Rick/Sandeep",
 }
 # [home, away] - must match PAIRS in the page
 PAIRS = [["AJ","CHP"],["AJ","BD"],["ND","AJ"],["DS","AJ"],["AJ","DCP"],["RRM","AJ"],["AJ","JK"],["WRS","AJ"],
@@ -164,16 +165,24 @@ def heading(m):
     return f"{TEAMS[m['a']]} at {TEAMS[m['h']]}"
 
 
-def posted_email(poster, reader, m, keys, new, note):
-    subject = f"DMPL Flight 2: {TEAMS[poster]} posted times to play you"
+def morning_email(reader, posters, avail, matches, notes, new_by_team, now):
+    names = [TEAMS[p] for p in posters]
+    who = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+    subject = f"DMPL Flight 2: new times from {who}"
     b = Body()
-    b.p(f"{TEAMS[poster]} marked times they can play. You still need to schedule this match "
-        f"({heading(m)}). Tap a time to open the scheduler and book it:")
-    b.times(reader, m, keys, new)
-    b.note(poster, note)
+    b.p(f"Good morning {TEAMS[reader]}. Teams you still need to play added times they can play. "
+        "Tap a time to open the scheduler and book it:")
+    for p in posters:
+        m = match_between(reader, p)
+        keys = [k for k in open_times(avail, matches, p, now) if k not in booked_times(matches, reader)]
+        b.raw(f"{TEAMS[p]} ({'home' if m['h'] == p else 'away'}):",
+              f"<p style='margin:10px 0 2px'><b>{html.escape(TEAMS[p])}</b> ({'home' if m['h'] == p else 'away'})</p>")
+        b.times(reader, m, keys, new_by_team.get(p, set()))
+        b.note(p, (notes or {}).get(p, "").strip())
     b.p(f"None of these work? Mark your own times so they can see them: {team_link(reader)}")
-    b.p(f"{TEAMS[m['h']]} is the home team and reserves the court once it's booked.")
+    b.p("The home team reserves the court once a match is booked.")
     return subject, *b.done()
+
 
 def booked_email(m, when, moved, by):
     home, away = TEAMS[m["h"]], TEAMS[m["a"]]
@@ -249,7 +258,6 @@ def run(now, preview, store, mailer, roster, log=print):
     sent = store.get("dmpl/sent") or {}
     s_book = dict(sent.get("booked") or {})
     s_rem = dict(sent.get("reminder") or {})
-    snap = dict(sent.get("snap") or {})
     told = dict(sent.get("told") or {})
 
     outbox = []   # (teams_to_email, label, subject, text, html, stamp_keys)
@@ -285,32 +293,32 @@ def run(now, preview, store, mailer, roster, log=print):
             stamps[f"booked/{mid}"] = None
             stamps[f"reminder/{mid}"] = None
 
-    # ---- times posted (wait until a team's times hold still for one run) ----
-    for team in TEAMS:
-        cur = open_times(avail, matches, team, now)
-        last = sorted(snap.get(team) or {})
-        if cur != last:
-            stamps[f"snap/{team}"] = {k: True for k in cur} or None
-            continue
-        before = set(told.get(team) or {})
-        new = [k for k in cur if k not in before]
-        if new:
-            for o in unscheduled_opponents(matches, team):
-                m = match_between(team, o)
-                keys = [k for k in cur if k not in booked_times(matches, o)]
-                if keys:
-                    outbox.append(([o], f"times posted {TEAMS[team]} -> {TEAMS[o]}",
-                                   *posted_email(team, o, m, keys, set(new), (notes.get(team) or "").strip()),
-                                   [f"told/{team}"]))
-        if set(cur) != before:
-            stamps[f"told/{team}"] = {k: True for k in cur} or None
-
-    # ---- Monday check-in ----
+    # ---- 8 AM: Monday check-in, or the daily "new times" email ----
     today = now.date().isoformat()
-    if now.weekday() == 0 and now.hour >= MONDAY_HOUR and sent.get("monday") != today:
-        for team in TEAMS:
-            outbox.append(([team], f"monday {TEAMS[team]}", *monday_email(team, avail, matches, notes, now), ["monday"]))
-        stamps["monday"] = today
+    if not sent.get("morning"):
+        stamps["morning"] = today   # first run after setup: start with tomorrow's 8 AM email
+    elif now.hour >= MORNING_HOUR and sent.get("morning") != today:
+        cur = {t: open_times(avail, matches, t, now) for t in TEAMS}
+        new_by_team = {t: {k for k in cur[t] if k not in (told.get(t) or {})} for t in TEAMS}
+        if now.weekday() == 0:
+            for team in TEAMS:
+                outbox.append(([team], f"monday {TEAMS[team]}",
+                               *monday_email(team, avail, matches, notes, now), []))
+        else:
+            for reader in TEAMS:
+                posters = [p for p in unscheduled_opponents(matches, reader)
+                           if new_by_team[p] and [k for k in cur[p] if k not in booked_times(matches, reader)]]
+                if posters:
+                    outbox.append(([reader], f"new times for {TEAMS[reader]} from "
+                                   + ", ".join(TEAMS[p] for p in posters),
+                                   *morning_email(reader, posters, avail, matches, notes, new_by_team, now), []))
+        stamps["morning"] = today
+        for t in TEAMS:   # everything open now has been told
+            stamps[f"told/{t}"] = {k: True for k in cur[t]} or None
+    if "snap" in sent:
+        stamps["snap"] = None      # no longer used
+    if "monday" in sent:
+        stamps["monday"] = None    # replaced by "morning"
 
     if not outbox:
         if stamps and not preview:
