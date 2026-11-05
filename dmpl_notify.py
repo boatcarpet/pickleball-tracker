@@ -5,24 +5,27 @@ Runs every 15 minutes. Each run reads the scheduler data in Firebase and
 sends only what is new, stamping each send under dmpl/sent so nothing goes
 out twice:
 
-TIMES LINE UP -> the first time two teams have a time in common, one email to
-                 every player on both teams with the common times. The home
-                 team books it on the page and reserves a court.
-MATCH BOOKED  -> when either team taps Book (or moves a booking to a new
-                 time), one email to every player on both teams.
-DAY BEFORE    -> from 9am the day before a booked match, a reminder to both
-                 teams. Skipped if the match was booked after that point.
+TIMES POSTED    -> when a team marks new times (and has stopped changing them
+                   for one run, so a burst of taps is one email), each team
+                   they still need to play gets an email with those times and
+                   the team's note. Every time is a link that opens the page
+                   with the reader's team picked and that match ready to book.
+MATCH BOOKED    -> when either team books (or moves) a match: both teams.
+MATCH CANCELLED -> when either team cancels a booked match: both teams.
+DAY BEFORE      -> from 9am the day before a booked match: both teams.
+MONDAY 9AM      -> each team gets a reminder to mark times, with the open
+                   times of every team they still need to play (as links)
+                   and their upcoming booked matches.
 
-Each email goes to both teams together so they can reply-all to sort out
-the court. Player emails come from the DMPL_ROSTER secret (never stored on
-the public page or in this repo). Kevin gets a short receipt when anything
-is sent.
+Player emails come from the DMPL_ROSTER secret (never stored on the public
+page or in this repo). Kevin gets a short receipt when anything is sent.
 
-MODE=auto runs normally. PREVIEW=true emails Kevin only and changes nothing.
+PREVIEW=true sends everything to Kevin only and changes nothing.
 """
 import os
 import re
 import json
+import html
 import smtplib
 import datetime
 from email.message import EmailMessage
@@ -32,7 +35,9 @@ DATABASE_URL = "https://wednesday-tennis-tracker-default-rtdb.firebaseio.com"
 PAGE_URL = "https://boatcarpet.github.io/dmpl/"
 ADMIN_EMAIL = "sales@boatcarpet.com"
 MICHIGAN = ZoneInfo("America/New_York")
-REMINDER_HOUR = 9  # 9:00 AM the day before
+REMINDER_HOUR = 9   # 9:00 AM the day before a match
+MONDAY_HOUR = 9     # 9:00 AM Monday reminder
+MAX_TIMES = 15      # most times listed per team in one email
 
 TEAMS = {
     "AJ": "Arnaud/Jess", "BD": "Bryan/Dan", "CHP": "Curry/Heil/Peterson",
@@ -47,7 +52,7 @@ PAIRS = [["AJ","CHP"],["AJ","BD"],["ND","AJ"],["DS","AJ"],["AJ","DCP"],["RRM","A
  ["DS","WRS"],["DS","ND"],["DS","RRM"],["JK","DS"],
  ["JK","RRM"],["WRS","JK"],["ND","JK"],
  ["RRM","ND"],["WRS","ND"],["RRM","WRS"]]
-PLAYED = {"AJ-CHP"}
+PLAYED = {"AJ-CHP", "JK-CHP"}   # must match PLAYED in the page
 MATCHES = [{"id": f"{h}-{a}", "h": h, "a": a} for h, a in PAIRS if f"{h}-{a}" not in PLAYED]
 
 EMAIL_OK = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
@@ -64,92 +69,175 @@ def slot_time(key):
 
 def nice(key):
     t = slot_time(key)
-    hour = t.strftime("%I").lstrip("0")
-    return f"{t.strftime('%a %b')} {t.day} at {hour}:{t.strftime('%M %p')}"
+    return f"{t.strftime('%a %b')} {t.day} at {t.strftime('%I').lstrip('0')}:{t.strftime('%M %p')}"
 
 
-# ---------------------------------------------------------------- schedule logic (same rules as the page)
+# ---------------------------------------------------------------- schedule helpers
 
-def avail_of(avail, team):
-    return set((avail or {}).get(team) or {})
+def opp_of(m, team):
+    return m["a"] if m["h"] == team else m["h"]
 
-def booked_for(matches, team):
-    out = {}
+def match_between(a, b):
+    for m in MATCHES:
+        if {m["h"], m["a"]} == {a, b}:
+            return m
+    return None
+
+def booked_times(matches, team):
+    out = set()
     for mid, b in (matches or {}).items():
         h, a = mid.split("-")
         if team in (h, a) and isinstance(b, dict) and b.get("when"):
-            out[b["when"]] = mid
+            out.add(b["when"])
     return out
 
-def overlap(m, avail, matches, now):
-    bh, ba = booked_for(matches, m["h"]), booked_for(matches, m["a"])
-    common = avail_of(avail, m["h"]) & avail_of(avail, m["a"])
-    return sorted(k for k in common if slot_time(k) > now and k not in bh and k not in ba)
+def open_times(avail, matches, team, now):
+    """Future times a team marked, minus times it already has a match."""
+    taken = booked_times(matches, team)
+    return sorted(k for k in ((avail or {}).get(team) or {})
+                  if slot_time(k) > now and k not in taken)
+
+def unscheduled_opponents(matches, team):
+    """Teams this team still has to play with nothing booked."""
+    out = []
+    for m in MATCHES:
+        if team in (m["h"], m["a"]) and not (isinstance((matches or {}).get(m["id"]), dict)
+                                             and matches[m["id"]].get("when")):
+            out.append(opp_of(m, team))
+    return out
+
+def book_link(reader, m, key):
+    return f"{PAGE_URL}#book-{reader}-{m['id']}-{key}"
+
+def team_link(team):
+    return f"{PAGE_URL}#team-{team}"
 
 
-# ---------------------------------------------------------------- emails
+# ---------------------------------------------------------------- email building
+# Each email is built as (text, html) together from simple pieces.
+
+class Body:
+    def __init__(self):
+        self.t, self.h = [], []
+
+    def p(self, text):
+        self.t += [text, ""]
+        self.h.append(f"<p>{html.escape(text)}</p>")
+
+    def raw(self, text_line, html_part):
+        self.t.append(text_line)
+        self.h.append(html_part)
+
+    def times(self, reader, m, keys, new=()):
+        if not keys:
+            return
+        shown = keys[:MAX_TIMES]
+        items = []
+        for k in shown:
+            tag = "  (new)" if k in new else ""
+            self.t.append(f"  - {nice(k)}{tag}: {book_link(reader, m, k)}")
+            items.append(f'<li><a href="{book_link(reader, m, k)}">{html.escape(nice(k))}</a>'
+                         f'{" <b>new</b>" if k in new else ""}</li>')
+        if len(keys) > len(shown):
+            self.t.append(f"  ...and {len(keys) - len(shown)} more on the page")
+            items.append(f"<li>...and {len(keys) - len(shown)} more on the page</li>")
+        self.t.append("")
+        self.h.append("<ul>" + "".join(items) + "</ul>")
+
+    def note(self, team, text):
+        if text:
+            self.t += [f"  {TEAMS[team]} note: {text}", ""]
+            self.h.append(f'<p style="margin:4px 0 12px;padding:6px 10px;border-left:3px solid #f2a900;background:#fff3d6">'
+                          f"<b>{html.escape(TEAMS[team])} note:</b> {html.escape(text)}</p>")
+
+    def done(self):
+        text = "\n".join(self.t).rstrip() + "\n"
+        page = ('<div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.45;color:#18232e">'
+                + "".join(self.h) + "</div>")
+        return text, page
+
 
 def roster_emails(roster, team):
-    out = []
-    for e in roster.get(team) or []:
-        e = (e or "").strip()
-        if EMAIL_OK.match(e):
-            out.append(e)
-    return out
+    return [e.strip() for e in roster.get(team) or [] if EMAIL_OK.match((e or "").strip())]
 
 def heading(m):
     return f"{TEAMS[m['a']]} at {TEAMS[m['h']]}"
 
-def overlap_email(m, times):
-    home, away = TEAMS[m["h"]], TEAMS[m["a"]]
-    listed = "\n".join(f"  - {nice(k)}" for k in times)
-    subject = f"DMPL Flight 2: {away} at {home} - times that work for both teams"
-    body = f"""{home} and {away}: you both marked these times as available on the Flight 2 scheduler:
 
-{listed}
+def posted_email(poster, reader, m, keys, new, note):
+    subject = f"DMPL Flight 2: {TEAMS[poster]} posted times to play you"
+    b = Body()
+    b.p(f"{TEAMS[poster]} marked times they can play. You still need to schedule this match "
+        f"({heading(m)}). Tap a time to open the scheduler and book it:")
+    b.times(reader, m, keys, new)
+    b.note(poster, note)
+    b.p(f"None of these work? Mark your own times so they can see them: {team_link(reader)}")
+    b.p(f"{TEAMS[m['h']]} is the home team and reserves the court once it's booked.")
+    return subject, *b.done()
 
-Either team can pick one and tap Book on the page:
-{PAGE_URL}
-
-{home} is the home team, so {home} reserves the court.
-
-Reply-all here if you need to work out which time or which club.
-
-Everyone on both teams will get an email once the match is booked.
-"""
-    return subject, body
-
-def booked_email(m, when, moved):
+def booked_email(m, when, moved, by):
     home, away = TEAMS[m["h"]], TEAMS[m["a"]]
     subject = f"DMPL Flight 2: match {'moved' if moved else 'booked'} - {away} at {home}, {nice(when)}"
-    body = f"""Your Flight 2 match is {'now moved to' if moved else 'booked for'}:
+    b = Body()
+    b.p(f"Your Flight 2 match is {'now moved to' if moved else 'booked for'}:")
+    b.raw(f"  {away} at {home}\n  {nice(when)}\n",
+          f"<p style='font-size:17px'><b>{html.escape(away)} at {html.escape(home)}</b><br>{html.escape(nice(when))}</p>")
+    if by in TEAMS:
+        b.p(f"Booked by {TEAMS[by]}.")
+    b.p(f"{home} (home team): please reserve a court.")
+    b.p(f"Need to change it? Either team can cancel it on the page (tap the booked slot) and pick another time: {PAGE_URL}")
+    b.p("A reminder goes out the day before. Enter the score on Tenniscores after you play.")
+    return subject, *b.done()
 
-  {away} at {home}
-  {nice(when)}
-
-{home} (home team): please make sure a court is reserved.
-
-Need to change it? Either team can tap Unbook on the page and pick another time:
-{PAGE_URL}
-
-A reminder goes out the day before. Enter the score on Tenniscores after you play.
-"""
-    return subject, body
+def cancelled_email(m, when):
+    home, away = TEAMS[m["h"]], TEAMS[m["a"]]
+    subject = f"DMPL Flight 2: match cancelled - {away} at {home}, {nice(when)}"
+    b = Body()
+    b.p(f"The Flight 2 match {away} at {home} on {nice(when)} was cancelled on the scheduler.")
+    b.p(f"{home}: if you reserved a court, release it.")
+    b.p(f"Pick a new time here: {PAGE_URL}")
+    return subject, *b.done()
 
 def reminder_email(m, when):
     home, away = TEAMS[m["h"]], TEAMS[m["a"]]
     subject = f"Reminder: DMPL Flight 2 tomorrow - {away} at {home}, {nice(when)}"
-    body = f"""Reminder: your Flight 2 match is tomorrow.
+    b = Body()
+    b.p("Reminder: your Flight 2 match is tomorrow.")
+    b.raw(f"  {away} at {home}\n  {nice(when)}\n",
+          f"<p style='font-size:17px'><b>{html.escape(away)} at {html.escape(home)}</b><br>{html.escape(nice(when))}</p>")
+    b.p(f"{home}: double-check the court is reserved. Enter the score on Tenniscores after you play.")
+    return subject, *b.done()
 
-  {away} at {home}
-  {nice(when)}
-
-{home}: double-check the court is reserved.
-Enter the score on Tenniscores after you play.
-
-{PAGE_URL}
-"""
-    return subject, body
+def monday_email(team, avail, matches, notes, now):
+    subject = f"DMPL Flight 2: Monday check-in for {TEAMS[team]}"
+    b = Body()
+    upcoming = sorted((b_["when"], mid) for mid, b_ in (matches or {}).items()
+                      if isinstance(b_, dict) and b_.get("when") and team in mid.split("-")
+                      and slot_time(b_["when"]) > now and mid not in PLAYED)
+    todo = unscheduled_opponents(matches, team)
+    b.p(f"Good morning {TEAMS[team]}. Please mark the times your team can play this week and next: {team_link(team)}")
+    if upcoming:
+        b.p("Your booked matches:")
+        for when, mid in upcoming:
+            h, a = mid.split("-")
+            b.raw(f"  - {TEAMS[a]} at {TEAMS[h]}, {nice(when)}",
+                  f"<div>&bull; {html.escape(TEAMS[a])} at {html.escape(TEAMS[h])}, <b>{html.escape(nice(when))}</b></div>")
+        b.raw("", "<br>")
+    if todo:
+        b.p(f"Still to schedule ({len(todo)}). Tap a time to book it:")
+        for o in todo:
+            m = match_between(team, o)
+            keys = [k for k in open_times(avail, matches, o, now) if k not in booked_times(matches, team)]
+            b.raw(f"{TEAMS[o]} ({'home' if m['h'] == o else 'away'}):",
+                  f"<p style='margin:10px 0 2px'><b>{html.escape(TEAMS[o])}</b> ({'home' if m['h'] == o else 'away'})</p>")
+            if keys:
+                b.times(team, m, keys)
+            else:
+                b.raw("  hasn't marked any times yet\n", "<p style='margin:0 0 6px;color:#5d6b78'>hasn't marked any times yet</p>")
+            b.note(o, (notes or {}).get(o, "").strip())
+    else:
+        b.p("All of your matches are scheduled or played.")
+    return subject, *b.done()
 
 
 # ---------------------------------------------------------------- the run
@@ -157,47 +245,72 @@ Enter the score on Tenniscores after you play.
 def run(now, preview, store, mailer, roster, log=print):
     avail = store.get("dmpl/avail") or {}
     matches = store.get("dmpl/matches") or {}
+    notes = store.get("dmpl/notes") or {}
     sent = store.get("dmpl/sent") or {}
-    s_over = dict(sent.get("overlap") or {})
     s_book = dict(sent.get("booked") or {})
     s_rem = dict(sent.get("reminder") or {})
+    snap = dict(sent.get("snap") or {})
+    told = dict(sent.get("told") or {})
 
-    outbox = []   # (match, kind, subject, body)
-    stamps = {}   # path under dmpl/sent -> value (None deletes)
+    outbox = []   # (teams_to_email, label, subject, text, html, stamp_keys)
+    stamps = {}
+    if "overlap" in sent:
+        stamps["overlap"] = None   # old email type, no longer used
 
+    # ---- bookings, cancellations, day-before reminders ----
     for m in MATCHES:
         mid = m["id"]
         b = matches.get(mid) if isinstance(matches.get(mid), dict) else None
         when = b.get("when") if b else None
-
         if when:
-            # MATCH BOOKED (new or moved)
             if s_book.get(mid) != when:
-                outbox.append((m, "booked", *booked_email(m, when, moved=bool(s_book.get(mid)))))
+                outbox.append(([m["h"], m["a"]], f"booked {heading(m)}",
+                               *booked_email(m, when, bool(s_book.get(mid)), b.get("by")), [f"booked/{mid}"]))
                 stamps[f"booked/{mid}"] = when
-                # booked late (after the reminder point): no separate reminder
                 rem_at = (slot_time(when) - datetime.timedelta(days=1)).replace(hour=REMINDER_HOUR, minute=0)
                 if now >= rem_at:
-                    stamps[f"reminder/{mid}"] = when
-            # DAY BEFORE
+                    stamps[f"reminder/{mid}"] = when   # booked late: no separate reminder
             elif s_rem.get(mid) != when:
                 t = slot_time(when)
                 rem_at = (t - datetime.timedelta(days=1)).replace(hour=REMINDER_HOUR, minute=0)
                 if rem_at <= now < t:
-                    outbox.append((m, "reminder", *reminder_email(m, when)))
+                    outbox.append(([m["h"], m["a"]], f"reminder {heading(m)}",
+                                   *reminder_email(m, when), [f"reminder/{mid}"]))
                     stamps[f"reminder/{mid}"] = when
-        else:
-            if s_book.get(mid):
-                # unbooked: allow fresh emails when they line up / book again
-                stamps[f"booked/{mid}"] = None
-                stamps[f"reminder/{mid}"] = None
-                stamps[f"overlap/{mid}"] = None
-                s_over.pop(mid, None)
-            # TIMES LINE UP (first time only)
-            times = overlap(m, avail, matches, now)
-            if times and not s_over.get(mid):
-                outbox.append((m, "overlap", *overlap_email(m, times)))
-                stamps[f"overlap/{mid}"] = now.isoformat(timespec="minutes")
+        elif s_book.get(mid):
+            old = s_book[mid]
+            if slot_time(old) > now:
+                outbox.append(([m["h"], m["a"]], f"cancelled {heading(m)}",
+                               *cancelled_email(m, old), [f"booked/{mid}", f"reminder/{mid}"]))
+            stamps[f"booked/{mid}"] = None
+            stamps[f"reminder/{mid}"] = None
+
+    # ---- times posted (wait until a team's times hold still for one run) ----
+    for team in TEAMS:
+        cur = open_times(avail, matches, team, now)
+        last = sorted(snap.get(team) or {})
+        if cur != last:
+            stamps[f"snap/{team}"] = {k: True for k in cur} or None
+            continue
+        before = set(told.get(team) or {})
+        new = [k for k in cur if k not in before]
+        if new:
+            for o in unscheduled_opponents(matches, team):
+                m = match_between(team, o)
+                keys = [k for k in cur if k not in booked_times(matches, o)]
+                if keys:
+                    outbox.append(([o], f"times posted {TEAMS[team]} -> {TEAMS[o]}",
+                                   *posted_email(team, o, m, keys, set(new), (notes.get(team) or "").strip()),
+                                   [f"told/{team}"]))
+        if set(cur) != before:
+            stamps[f"told/{team}"] = {k: True for k in cur} or None
+
+    # ---- Monday check-in ----
+    today = now.date().isoformat()
+    if now.weekday() == 0 and now.hour >= MONDAY_HOUR and sent.get("monday") != today:
+        for team in TEAMS:
+            outbox.append(([team], f"monday {TEAMS[team]}", *monday_email(team, avail, matches, notes, now), ["monday"]))
+        stamps["monday"] = today
 
     if not outbox:
         if stamps and not preview:
@@ -206,24 +319,24 @@ def run(now, preview, store, mailer, roster, log=print):
         return []
 
     done, problems = [], []
-    for m, kind, subject, body in outbox:
-        to = roster_emails(roster, m["h"]) + roster_emails(roster, m["a"])
+    for teams, label, subject, text, page, keys in outbox:
+        to = [e for t in teams for e in roster_emails(roster, t)]
         if preview:
             why = mailer.send([ADMIN_EMAIL], "[PREVIEW] " + subject,
-                              f"PREVIEW ONLY - would go to: {', '.join(to) or '(no addresses)'}\n\n----------\n\n{body}")
+                              f"PREVIEW ONLY - would go to: {', '.join(to) or '(no addresses)'}\n\n----------\n\n" + text,
+                              page)
         elif not to:
-            why = "no addresses for either team"
+            why = "no addresses"
         else:
-            why = mailer.send(to, subject, body)
+            why = mailer.send(to, subject, text, page)
         if why:
-            problems.append(f"{heading(m)} ({kind}): {why}")
-            log(f"NOT SENT {kind} {m['id']} - {why}")
-            # leave the stamp off so the next run tries again
-            for k in [k for k in stamps if k.endswith("/" + m["id"])]:
-                stamps.pop(k)
+            problems.append(f"{label}: {why}")
+            log(f"NOT SENT {label} - {why}")
+            for k in keys:            # leave the stamp off so the next run tries again
+                stamps.pop(k, None)
         else:
-            done.append(f"{kind:9} {heading(m)}  ({len(to)} players)")
-            log(f"Sent {kind} {m['id']} to {len(to)}")
+            done.append(f"{label}  ({len(to)} players)")
+            log(f"Sent {label} to {len(to)}")
 
     if preview:
         log("Preview only - nothing stamped.")
@@ -246,12 +359,14 @@ class Mailer:
     def __init__(self, user, password):
         self.user, self.password, self.server = user, password, None
 
-    def send(self, to, subject, body):
+    def send(self, to, subject, text, page=None):
         msg = EmailMessage()
         msg["Subject"] = subject
         msg["From"] = self.user
         msg["To"] = ", ".join(to)
-        msg.set_content(body)
+        msg.set_content(text)
+        if page:
+            msg.add_alternative(page, subtype="html")
         for attempt in (1, 2):
             try:
                 if self.server is None:
