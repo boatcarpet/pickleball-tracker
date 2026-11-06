@@ -272,7 +272,7 @@ def run(now, preview, store, mailer, roster, log=print):
         when = b.get("when") if b else None
         if when:
             if s_book.get(mid) != when:
-                outbox.append(([m["h"], m["a"]], f"booked {heading(m)}",
+                outbox.append(([m["h"], m["a"]], f"booked {heading(m)}, {nice(when)}",
                                *booked_email(m, when, bool(s_book.get(mid)), b.get("by")), [f"booked/{mid}"]))
                 stamps[f"booked/{mid}"] = when
                 rem_at = (slot_time(when) - datetime.timedelta(days=1)).replace(hour=REMINDER_HOUR, minute=0)
@@ -282,13 +282,13 @@ def run(now, preview, store, mailer, roster, log=print):
                 t = slot_time(when)
                 rem_at = (t - datetime.timedelta(days=1)).replace(hour=REMINDER_HOUR, minute=0)
                 if rem_at <= now < t:
-                    outbox.append(([m["h"], m["a"]], f"reminder {heading(m)}",
+                    outbox.append(([m["h"], m["a"]], f"reminder {heading(m)}, {nice(when)}",
                                    *reminder_email(m, when), [f"reminder/{mid}"]))
                     stamps[f"reminder/{mid}"] = when
         elif s_book.get(mid):
             old = s_book[mid]
             if slot_time(old) > now:
-                outbox.append(([m["h"], m["a"]], f"cancelled {heading(m)}",
+                outbox.append(([m["h"], m["a"]], f"cancelled {heading(m)}, {nice(old)}",
                                *cancelled_email(m, old), [f"booked/{mid}", f"reminder/{mid}"]))
             stamps[f"booked/{mid}"] = None
             stamps[f"reminder/{mid}"] = None
@@ -343,7 +343,7 @@ def run(now, preview, store, mailer, roster, log=print):
             for k in keys:            # leave the stamp off so the next run tries again
                 stamps.pop(k, None)
         else:
-            done.append(f"{label}  ({len(to)} players)")
+            done.append(label)
             log(f"Sent {label} to {len(to)}")
 
     if preview:
@@ -353,11 +353,28 @@ def run(now, preview, store, mailer, roster, log=print):
     if stamps:
         store.update("dmpl/sent", stamps)
 
-    lines = ["Flight 2 scheduler emails sent:", ""] + [f"  {d}" for d in done]
+    # Short receipt for Kevin: one line per thing that happened.
+    posters, monday, lines = {}, 0, []
+    for label in done:
+        if label.startswith("new times for "):
+            for name in label.split(" from ", 1)[1].split(", "):
+                posters[name] = posters.get(name, 0) + 1
+        elif label.startswith("monday "):
+            monday += 1
+        elif label.startswith("booked "):
+            lines.append("Booked: " + label[7:])
+        elif label.startswith("cancelled "):
+            lines.append("Cancelled: " + label[10:])
+        elif label.startswith("reminder "):
+            lines.append("Reminder sent: " + label[9:])
+    for name, n in posters.items():
+        lines.append(f"{name}'s new times went to {n} team{'s' if n != 1 else ''}.")
+    if monday:
+        lines.append(f"Monday check-in went to {monday} teams.")
     if problems:
-        lines += ["", "Problems:"] + [f"  {p}" for p in problems]
-    lines += ["", PAGE_URL]
-    mailer.send([ADMIN_EMAIL], f"[dmpl] {len(done)} Flight 2 email(s) sent", "\n".join(lines) + "\n")
+        lines += ["", "Not sent:"] + [f"  {p}" for p in problems]
+    subject = "[dmpl] " + (lines[0] if len(lines) == 1 else "Flight 2 update")
+    mailer.send([ADMIN_EMAIL], subject, "\n".join(lines) + "\n\n" + PAGE_URL + "\n")
     return done
 
 
