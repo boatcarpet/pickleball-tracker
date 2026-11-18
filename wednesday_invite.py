@@ -28,6 +28,12 @@ import datetime
 from email.message import EmailMessage
 from zoneinfo import ZoneInfo
 
+# Twilio is optional — text messages are only sent when the credentials are set.
+try:
+    from twilio.rest import Client as TwilioClient
+except ImportError:
+    TwilioClient = None
+
 DATABASE_URL = "https://wednesday-tennis-tracker-default-rtdb.firebaseio.com"
 TRACKER_URL = "https://boatcarpet.github.io/tennis-tracker/"
 
@@ -280,6 +286,68 @@ def update_email(wed, L, me, dropped, added):
     return subject, "\n".join(lines) + "\n"
 
 
+# ---------------------------------------------------------------- SMS text versions (shorter for phones)
+
+def thursday_sms(wed):
+    return (f"Wednesday Paddle {short(wed)} at 7am - sign-up is open.\n\n"
+            f"Tap IN: {TRACKER_URL}\n\n"
+            f"Courts fill 4 at a time in sign-up order. Reminder Sunday 2pm, courts email Tuesday 2pm.\n\n"
+            f"Reply STOP to opt out.")
+
+
+def sunday_sms(wed, L=None):
+    if L is not None and L["order"]:
+        n = len(L["order"])
+        names = ", ".join(name for _, name in L["order"])
+        return (f"Reminder: paddle Wed {short(wed)} 7am.\n\n"
+                f"{n} in so far: {names}\n\n"
+                f"Not in yet? Tap IN: {TRACKER_URL}\n\n"
+                f"Reply STOP to opt out.")
+    return (f"Paddle this Wed {short(wed)} at 7am - sign-up is open.\n\n"
+            f"Tap IN: {TRACKER_URL}\n\n"
+            f"Reply STOP to opt out.")
+
+
+def tuesday_sms(wed, L):
+    if not L["order"]:
+        return (f"No one signed up for paddle Wed {short(wed)} 7am yet.\n\n"
+                f"Tap IN: {TRACKER_URL}\n\n"
+                f"Reply STOP to opt out.")
+    lines = [f"Courts for Wed {short(wed)} 7am paddle:"]
+    lines.append("")
+    n = 0
+    for i, court in enumerate(L["courts"], start=1):
+        lines.append(f"Court {i}: " + ", ".join(name for _, name in court))
+    if L["waiting"]:
+        nxt = len(L["courts"]) + 1
+        lines.append(f"Waiting (Court {nxt} needs {L['need']} more): " +
+                     ", ".join(name for _, name in L["waiting"]))
+    lines.append("")
+    lines.append(f"Can't make it? Tap OUT: {TRACKER_URL}")
+    lines.append("")
+    lines.append("Reply STOP to opt out.")
+    return "\n".join(lines)
+
+
+def update_sms(wed, L, me, dropped, added):
+    lines = [f"Court change for Wed {short(wed)} 7am paddle."]
+    if dropped:
+        lines.append(f"Dropped: {names_list(dropped)}")
+    if added:
+        lines.append(f"Added: {names_list(added)}")
+    lines.append("")
+    if me["court"]:
+        others = [n for k, n in L["courts"][me["court"] - 1] if k != me["key"]]
+        lines.append(f"You're on Court {me['court']} with {names_list(others)}.")
+    else:
+        nxt = len(L["courts"]) + 1
+        lines.append(f"You're waiting for Court {nxt} (needs {plural(L['need'])}).")
+    lines.append("")
+    lines.append(f"Full courts: {TRACKER_URL}")
+    lines.append("Reply STOP to opt out.")
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------- sending
 
 class Mailer:
@@ -325,32 +393,88 @@ class Mailer:
             self.server = None
 
 
+class TextSender:
+    """Send individual SMS messages via Twilio."""
+
+    def __init__(self, account_sid, auth_token, from_number):
+        if TwilioClient is None:
+            raise RuntimeError("twilio package is not installed")
+        self.client = TwilioClient(account_sid, auth_token)
+        self.from_number = from_number
+
+    def send(self, to, body):
+        """Returns None if sent, or a short reason if not."""
+        try:
+            msg = self.client.messages.create(body=body, from_=self.from_number, to=to)
+            return None if msg.sid else "no SID returned"
+        except Exception as err:
+            return f"twilio error: {err}"
+
+
+PHONE_OK = re.compile(r"^\+1\d{10}$")
+
+
+def clean_phone(raw):
+    """Return a +1XXXXXXXXXX number, or None if it can't be used."""
+    if not isinstance(raw, str):
+        return None
+    digits = re.sub(r"[^\d+]", "", raw.strip())
+    # Accept 10 digits (add +1), 11 starting with 1 (add +), or already +1
+    if re.match(r"^\d{10}$", digits):
+        digits = "+1" + digits
+    elif re.match(r"^1\d{10}$", digits):
+        digits = "+" + digits
+    elif not digits.startswith("+"):
+        digits = "+" + digits
+    if not PHONE_OK.match(digits):
+        return None
+    return digits
+
+
 def address_book(players, contacts):
-    """{player key: (name, email)} for everyone on the list with a usable email."""
-    book, skipped, seen = {}, [], set()
+    """{player key: (name, email, phone, method)} for everyone on the list with a usable contact.
+    method is 'email' or 'text'. Legacy players with no method field default to 'email'."""
+    book, skipped, seen_email, seen_phone = {}, [], set(), set()
     for key, contact in (contacts or {}).items():
         person = players.get(key)
         if not isinstance(person, dict):
-            continue                           # email left behind by a removed player
+            continue                           # contact left behind by a removed player
         name = str(person.get("name", ""))
-        raw = contact.get("email", "") if isinstance(contact, dict) else ""
-        if not (raw or "").strip():
+        if not isinstance(contact, dict):
             continue
-        email = clean_email(raw)
-        if not email:
-            skipped.append((name, raw))
-            continue
-        if email.lower() in seen:
-            continue                           # two names sharing one address: one email
-        seen.add(email.lower())
-        book[key] = (name, email)
+        method = contact.get("method", "email")  # legacy contacts have no method -> email
+        raw_email = contact.get("email", "")
+        raw_phone = contact.get("phone", "")
+
+        if method == "text" and raw_phone:
+            phone = clean_phone(raw_phone)
+            if not phone:
+                skipped.append((name, raw_phone, "bad phone"))
+                continue
+            if phone in seen_phone:
+                continue
+            seen_phone.add(phone)
+            book[key] = (name, None, phone, "text")
+        else:
+            # Default to email for legacy or explicit email contacts
+            if not (raw_email or "").strip():
+                continue
+            email = clean_email(raw_email)
+            if not email:
+                skipped.append((name, raw_email, "bad email"))
+                continue
+            if email.lower() in seen_email:
+                continue
+            seen_email.add(email.lower())
+            book[key] = (name, email, None, "email")
     return book, skipped
 
 
-def run(now, mode, preview, store, mailer, log=print):
+def run(now, mode, preview, store, mailer, texter=None, log=print):
     """
     store  - object with get(path) and update(path, dict)
     mailer - object with .user and .send(to, subject, body)
+    texter - optional TextSender for SMS; None = no texts sent
     Returns a short word for what was done (used by the tests).
     """
     wed = target_wednesday(now)
@@ -389,51 +513,83 @@ def run(now, mode, preview, store, mailer, log=print):
 
     tag = f"[{job}{' preview' if preview else ''}]"
     book, skipped = address_book(players, contacts)
-    for name, raw in skipped:
-        log(f"{tag} Unusable address: {name or '(no name)'} -> {raw!r}")
+    for name, raw, reason in skipped:
+        log(f"{tag} Unusable contact: {name or '(no name)'} -> {raw!r} ({reason})")
 
     def everyone():
         # The sender is dropped from the group send - see ADMIN_EMAIL above.
-        return [(n, e) for (n, e) in book.values() if e.lower() != mailer.user.lower()]
+        out = []
+        for (n, e, ph, m) in book.values():
+            if m == "text" and ph:
+                out.append((n, None, ph, "text"))
+            elif e and e.lower() != mailer.user.lower():
+                out.append((n, e, None, "email"))
+        return out
 
-    def deliver(recipients, subject, body):
-        sent, failed = 0, []
-        for name, email in recipients:
-            why = mailer.send(email, subject, body)
-            if why:
-                failed.append((name, email, why))
-                log(f"{tag} NOT SENT {name or '(no name)'} <{email}> - {why}")
-            else:
-                sent += 1
-                log(f"{tag} Sent to {name or '(no name)'} <{email}>")
-        return sent, failed
+    def deliver(recipients, subject, body, sms_body=None):
+        sent_email, sent_text, failed = 0, 0, []
+        for name, email, phone, method in recipients:
+            if method == "text" and phone and texter:
+                text = sms_body or body
+                # SMS: strip the unsubscribe line and keep it short
+                why = texter.send(phone, text)
+                if why:
+                    failed.append((name, phone, why))
+                    log(f"{tag} NOT SENT (text) {name or '(no name)'} {phone} - {why}")
+                else:
+                    sent_text += 1
+                    log(f"{tag} Texted {name or '(no name)'} {phone}")
+            elif method == "text" and phone and not texter:
+                failed.append((name, phone, "Twilio not configured"))
+                log(f"{tag} NOT SENT (text) {name or '(no name)'} {phone} - Twilio not configured")
+            elif email:
+                why = mailer.send(email, subject, body)
+                if why:
+                    failed.append((name, email, why))
+                    log(f"{tag} NOT SENT {name or '(no name)'} <{email}> - {why}")
+                else:
+                    sent_email += 1
+                    log(f"{tag} Sent to {name or '(no name)'} <{email}>")
+        return sent_email, sent_text, failed
 
-    def receipt(title, sent, total, failed, body=None, extra=None):
+    def receipt(title, sent_email, sent_text, total, failed, body=None, extra=None):
         if not ADMIN_EMAIL:
             return
-        r = [f"{title} for {when}.", "", f"Emails sent: {sent} of {total}"]
+        sent = sent_email + sent_text
+        r = [f"{title} for {when}.", ""]
+        if sent_text:
+            r.append(f"Emails sent: {sent_email} / Texts sent: {sent_text} (of {total} total)")
+        else:
+            r.append(f"Emails sent: {sent_email} of {total}")
         if skipped:
-            r += ["", f"Unusable addresses ({len(skipped)}) - fix these on the page:"]
-            r += [f"  {n or '(no name)'} -> {raw!r}" for n, raw in skipped]
+            r += ["", f"Unusable contacts ({len(skipped)}) - fix these on the page:"]
+            r += [f"  {n or '(no name)'} -> {raw!r} ({reason})" for n, raw, reason in skipped]
         if failed:
             r += ["", f"Not delivered ({len(failed)}):"]
-            r += [f"  {n or '(no name)'} <{e}> - {why}" for n, e, why in failed]
-        no_email = sorted(str(p.get("name", "")) for k, p in players.items() if k not in book and p.get("name"))
-        if no_email:
-            r += ["", f"On the list with no email ({len(no_email)}): {', '.join(no_email)}"]
+            r += [f"  {n or '(no name)'} {addr} - {why}" for n, addr, why in failed]
+        no_contact = sorted(str(p.get("name", "")) for k, p in players.items() if k not in book and p.get("name"))
+        if no_contact:
+            r += ["", f"On the list with no contact ({len(no_contact)}): {', '.join(no_contact)}"]
         if extra:
             r += [""] + extra
         if body:
-            r += ["", "----- what went out -----", "", body.rstrip()]
+            r += ["", "----- what went out (email version) -----", "", body.rstrip()]
         r += ["", TRACKER_URL]
-        why = mailer.send(ADMIN_EMAIL, f"[wednesday paddle] {title} - {sent} email(s) for {when}", "\n".join(r) + "\n")
+        why = mailer.send(ADMIN_EMAIL, f"[wednesday paddle] {title} - {sent} message(s) for {when}", "\n".join(r) + "\n")
         log(f"{tag} Receipt {'NOT sent - ' + why if why else 'sent to ' + ADMIN_EMAIL}")
 
     def preview_mail(subject, body, recipients, note=""):
-        head = [f"PREVIEW ONLY - nothing was sent to the group and nothing was changed.",
-                f"This would go to {len(recipients)} "
-                f"{'person' if len(recipients) == 1 else 'people'}"
-                + (": " + ", ".join(sorted(n or e for n, e in recipients)) if recipients else "") + "."]
+        head = [f"PREVIEW ONLY - nothing was sent to the group and nothing was changed."]
+        email_r = [r for r in recipients if r[3] == "email"]
+        text_r = [r for r in recipients if r[3] == "text"]
+        parts = []
+        if email_r:
+            parts.append(f"{len(email_r)} email")
+        if text_r:
+            parts.append(f"{len(text_r)} text")
+        head.append(f"This would go to {' + '.join(parts) if parts else '0'} "
+                     f"{'person' if len(recipients) == 1 else 'people'}"
+                     + (": " + ", ".join(sorted(n for n, _, _, _ in recipients)) if recipients else "") + ".")
         if note:
             head.append(note)
         why = mailer.send(ADMIN_EMAIL, "[PREVIEW] " + subject, "\n".join(head) + "\n\n----------\n\n" + body)
@@ -463,9 +619,10 @@ def run(now, mode, preview, store, mailer, log=print):
         log(f"Done. {tag} Sign-up is open for {when}. No email sent.")
         return "open"
 
-    # ---- THURSDAY: reset, open sign-up for next Wednesday, email everyone ----
+    # ---- THURSDAY: reset, open sign-up for next Wednesday, email/text everyone ----
     if job == "thursday":
         subject, body = thursday_email(wed)
+        sms = thursday_sms(wed)
         recipients = everyone()
         if preview:
             preview_mail(subject, body, recipients,
@@ -473,25 +630,28 @@ def run(now, mode, preview, store, mailer, log=print):
                          "Note: sign-up for this Wednesday is already open, so a real run would not clear any replies.")
             return "thursday-preview"
         open_signup()
-        sent, failed = deliver(recipients, subject, body)
+        sent_email, sent_text, failed = deliver(recipients, subject, body, sms)
         store.update("wednesday/meta", {"thursdaySent": wk})
-        receipt("Thursday sign-up email", sent, len(recipients), failed, body)
-        log(f"Done. {tag} {sent} email(s) sent for {when}.")
+        receipt("Thursday sign-up", sent_email, sent_text, len(recipients), failed, body)
+        log(f"Done. {tag} {sent_email} email(s) + {sent_text} text(s) sent for {when}.")
         return "thursday"
 
     # ---- SUNDAY: reminder if sign-up opened Thursday, otherwise reset + open ----
     if job == "sunday":
         already_open = meta.get("openWeek") == wk
-        subject, body = sunday_email(wed, lineup(players) if already_open else None)
+        L_so_far = lineup(players) if already_open else None
+        subject, body = sunday_email(wed, L_so_far)
+        sms = sunday_sms(wed, L_so_far)
         recipients = everyone()
         if preview:
             preview_mail(subject, body, recipients)
             return "sunday-preview"
         open_signup()
-        sent, failed = deliver(recipients, subject, body)
+        sent_email, sent_text, failed = deliver(recipients, subject, body, sms)
         store.update("wednesday/meta", {"sundaySent": wk})
-        receipt("Sunday reminder email" if already_open else "Sunday sign-up email", sent, len(recipients), failed, body)
-        log(f"Done. {tag} {sent} email(s) sent for {when}.")
+        title = "Sunday reminder" if already_open else "Sunday sign-up"
+        receipt(title, sent_email, sent_text, len(recipients), failed, body)
+        log(f"Done. {tag} {sent_email} email(s) + {sent_text} text(s) sent for {when}.")
         return "sunday"
 
     L = lineup(players) if meta.get("openWeek") == wk else lineup({})
@@ -500,17 +660,18 @@ def run(now, mode, preview, store, mailer, log=print):
     # ---- TUESDAY: the courts, to everyone on the list ----
     if job == "tuesday":
         subject, body = tuesday_email(wed, L)
+        sms = tuesday_sms(wed, L)
         recipients = everyone()
         if preview:
             preview_mail(subject, body, recipients)
             return "tuesday-preview"
-        sent, failed = deliver(recipients, subject, body)
+        sent_email, sent_text, failed = deliver(recipients, subject, body, sms)
         store.update("wednesday/state", {"lineup": {"week": wk, "players": G or None}})
         store.update("wednesday/meta", {"tuesdaySent": wk})
-        in_no_email = [n for k, n in L["order"] if k not in book]
-        extra = [f"IN but no email, so they did not get this: {', '.join(in_no_email)}"] if in_no_email else None
-        receipt("Tuesday courts email", sent, len(recipients), failed, body, extra)
-        log(f"Done. {tag} {sent} email(s) sent for {when}.")
+        in_no_contact = [n for k, n in L["order"] if k not in book]
+        extra = [f"IN but no contact, so they did not get this: {', '.join(in_no_contact)}"] if in_no_contact else None
+        receipt("Tuesday courts", sent_email, sent_text, len(recipients), failed, body, extra)
+        log(f"Done. {tag} {sent_email} email(s) + {sent_text} text(s) sent for {when}.")
         return "tuesday"
 
     # ---- UPDATE: did anyone's court change since the last email? ----
@@ -539,14 +700,16 @@ def run(now, mode, preview, store, mailer, log=print):
 
     order_pos = {k: i for i, (k, _) in enumerate(L["order"])}
     changed.sort(key=lambda k: order_pos[k])
-    mails, no_email = [], []
+    msgs, no_contact = [], []
     for key in changed:
         me = dict(G[key], key=key)
         if key not in book:
-            no_email.append(me["name"])
+            no_contact.append(me["name"])
             continue
+        name, email, phone, method = book[key]
         subject, body = update_email(wed, L, me, dropped, added)
-        mails.append((book[key][0], book[key][1], subject, body))
+        sms = update_sms(wed, L, me, dropped, added)
+        msgs.append((name, email, phone, method, subject, body, sms))
 
     summary = []
     if dropped:
@@ -554,32 +717,44 @@ def run(now, mode, preview, store, mailer, log=print):
     if added:
         summary.append(f"Added: {names_list(added)}")
     summary.append("Court changed for: " + (names_list(G[k]["name"] for k in changed) or "no one still in"))
-    if no_email:
-        summary.append(f"Changed but no email, so not told: {names_list(no_email)}")
+    if no_contact:
+        summary.append(f"Changed but no contact, so not told: {names_list(no_contact)}")
     summary += ["", "Courts now:", "", courts_text(L) or "No one is in."]
 
     if preview:
-        sample = mails[0][3] if mails else "(no one to email)"
+        sample = msgs[0][5] if msgs else "(no one to notify)"
         why = mailer.send(ADMIN_EMAIL, f"[PREVIEW] Wednesday Paddle - court change ({when})",
                           "PREVIEW ONLY - nothing was sent to the group and nothing was changed.\n"
-                          f"{len(mails)} player(s) would each get their own email.\n\n"
+                          f"{len(msgs)} player(s) would each get their own message.\n\n"
                           + "\n".join(summary) + "\n\n----- example (the one for "
-                          + (mails[0][0] if mails else "-") + ") -----\n\n" + sample)
+                          + (msgs[0][0] if msgs else "-") + ") -----\n\n" + sample)
         log(f"{tag} Preview {'NOT sent - ' + why if why else 'sent to ' + ADMIN_EMAIL}")
         return "update-preview"
 
-    sent, failed = 0, []
-    for name, email, subject, body in mails:
-        why = mailer.send(email, subject, body)
-        if why:
-            failed.append((name, email, why))
-            log(f"{tag} NOT SENT {name} <{email}> - {why}")
-        else:
-            sent += 1
-            log(f"{tag} Sent to {name} <{email}>")
+    sent_email, sent_text, failed = 0, 0, []
+    for name, email, phone, method, subject, body, sms in msgs:
+        if method == "text" and phone and texter:
+            why = texter.send(phone, sms)
+            if why:
+                failed.append((name, phone, why))
+                log(f"{tag} NOT SENT (text) {name} {phone} - {why}")
+            else:
+                sent_text += 1
+                log(f"{tag} Texted {name} {phone}")
+        elif method == "text" and phone and not texter:
+            failed.append((name, phone, "Twilio not configured"))
+            log(f"{tag} NOT SENT (text) {name} {phone} - Twilio not configured")
+        elif email:
+            why = mailer.send(email, subject, body)
+            if why:
+                failed.append((name, email, why))
+                log(f"{tag} NOT SENT {name} <{email}> - {why}")
+            else:
+                sent_email += 1
+                log(f"{tag} Sent to {name} <{email}>")
     store.update("wednesday/state", {"lineup": {"week": wk, "players": G or None}})
-    receipt("Court change email", sent, len(mails), failed, None, summary)
-    log(f"Done. {tag} {sent} email(s) sent for {when}.")
+    receipt("Court change", sent_email, sent_text, len(msgs), failed, None, summary)
+    log(f"Done. {tag} {sent_email} email(s) + {sent_text} text(s) sent for {when}.")
     return "update"
 
 
@@ -608,7 +783,22 @@ if __name__ == "__main__":
         mode = "auto"
     preview = os.environ.get("PREVIEW", "false").strip().lower() == "true"
     mailer = Mailer(os.environ["SMTP_USER"], os.environ["SMTP_PASS"])
+
+    # Twilio is optional — texts are sent only when all three env vars are set.
+    texter = None
+    twilio_sid = os.environ.get("TWILIO_ACCOUNT_SID", "").strip()
+    twilio_token = os.environ.get("TWILIO_AUTH_TOKEN", "").strip()
+    twilio_number = os.environ.get("TWILIO_PHONE_NUMBER", "").strip()
+    if twilio_sid and twilio_token and twilio_number:
+        if TwilioClient is None:
+            print("[warning] TWILIO credentials set but twilio package not installed — texts will not be sent")
+        else:
+            texter = TextSender(twilio_sid, twilio_token, twilio_number)
+            print(f"[info] Twilio configured, texts will be sent from {twilio_number}")
+    else:
+        print("[info] Twilio not configured — text-preference players will not receive messages")
+
     try:
-        run(datetime.datetime.now(MICHIGAN), mode, preview, FirebaseStore(), mailer)
+        run(datetime.datetime.now(MICHIGAN), mode, preview, FirebaseStore(), mailer, texter)
     finally:
         mailer.close()
